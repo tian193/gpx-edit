@@ -71,6 +71,66 @@ class ExcelExportDialog(tk.Toplevel):
 
         self._update_export_state()
 
+    def _add_files(self):
+        """添加GPX文件（支持多选）"""
+        files = filedialog.askopenfilenames(
+            filetypes=[("GPX文件", "*.gpx"), ("所有文件", "*.*")]
+        )
+        for f in files:
+            if f not in self.file_data:
+                self._load_gpx_file(f)
+
+    def _add_folder(self):
+        """添加文件夹，自动扫描所有GPX文件"""
+        folder = filedialog.askdirectory()
+        if folder:
+            added_count = 0
+            for f in os.listdir(folder):
+                if f.lower().endswith('.gpx'):
+                    full_path = os.path.join(folder, f)
+                    if full_path not in self.file_data:
+                        self._load_gpx_file(full_path)
+                        added_count += 1
+            if added_count == 0:
+                messagebox.showinfo("提示", "文件夹中没有新的GPX文件")
+
+    def _remove_selected(self):
+        """移除选中的文件及其航点"""
+        selected_items = self.tree.selection()
+        if not selected_items:
+            messagebox.showinfo("提示", "请先选择要移除的文件或航点")
+            return
+
+        # 收集要移除的文件节点
+        files_to_remove = set()
+        for item in selected_items:
+            parent = self.tree.parent(item)
+            if parent == "":
+                # 选中的是文件节点
+                file_path = self.tree.item(item, "values")[0]
+                files_to_remove.add(file_path)
+            else:
+                # 选中的是航点节点，获取其父文件节点
+                file_path = self.tree.item(parent, "values")[0]
+                files_to_remove.add(file_path)
+
+        # 确认删除
+        if len(files_to_remove) > 1:
+            if not messagebox.askyesno("确认", f"确定要移除 {len(files_to_remove)} 个文件吗？"):
+                return
+
+        # 执行移除
+        for file_path in files_to_remove:
+            if file_path in self.file_data:
+                del self.file_data[file_path]
+            # 查找并删除树节点
+            for child in self.tree.get_children(""):
+                if self.tree.item(child, "values")[0] == file_path:
+                    self.tree.delete(child)
+                    break
+
+        self._update_export_state()
+
     def _center_window(self):
         """窗口居中"""
         self.update_idletasks()
