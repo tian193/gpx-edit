@@ -22,36 +22,24 @@ FIELD_CONFIG = {
 
 def _get_waypoint_value(waypoint, field: str):
     """从航点对象获取指定字段值"""
-    if field == "name":
-        return waypoint.name
-    elif field == "latitude":
-        return waypoint.latitude
-    elif field == "longitude":
-        return waypoint.longitude
-    elif field == "elevation":
-        return waypoint.elevation
-    elif field == "description":
-        return waypoint.description
-    elif field == "time":
+    if field == "time":
         if waypoint.time:
             return waypoint.time.strftime("%Y-%m-%d %H:%M:%S")
         return None
-    return None
+    return getattr(waypoint, field, None)
 
 
 class ExcelExporter:
     """Excel导出器"""
 
     @staticmethod
-    def export(waypoints: list, selected_fields: List[str], output_path: str) -> bool:
+    def export(waypoints: list, selected_fields: List[str], output_path: str):
         """
         导出航点到Excel
         Args:
             waypoints: gpxpy GPXWaypoint列表
             selected_fields: 选中的字段代码列表，如 ["name", "latitude", "longitude"]
             output_path: 输出文件路径(.xlsx)
-        Returns:
-            是否成功
         """
         wb = Workbook()
         ws = wb.active
@@ -82,4 +70,3 @@ class ExcelExporter:
                 ws.column_dimensions[ws.cell(1, col_idx).column_letter].width = min(max_len + 4, 50)
 
         wb.save(output_path)
-        return True

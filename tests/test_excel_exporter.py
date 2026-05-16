@@ -13,8 +13,7 @@ def _make_waypoint(name, lat, lon, ele=None, desc=None, time=None):
     """创建测试用航点"""
     wp = gpxpy.gpx.GPXWaypoint(latitude=lat, longitude=lon, elevation=ele, name=name, description=desc)
     if time:
-        from datetime import datetime
-        wp.time = datetime(2026, 5, 16, 10, 30, 0)
+        wp.time = time
     return wp
 
 
@@ -23,13 +22,13 @@ class TestExcelExporter:
 
     def test_export_all_fields(self):
         """测试导出全部字段"""
-        waypoints = [_make_waypoint("航点A", 39.9, 116.3, ele=100.5, desc="测试描述")]
+        from datetime import datetime
+        waypoints = [_make_waypoint("航点A", 39.9, 116.3, ele=100.5, desc="测试描述", time=datetime(2026, 5, 16, 10, 30, 0))]
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             path = f.name
         try:
             fields = ["name", "latitude", "longitude", "elevation", "description", "time"]
-            result = ExcelExporter.export(waypoints, fields, path)
-            assert result is True
+            ExcelExporter.export(waypoints, fields, path)
             wb = load_workbook(path)
             ws = wb.active
             headers = [cell.value for cell in ws[1]]
@@ -50,8 +49,7 @@ class TestExcelExporter:
             path = f.name
         try:
             fields = ["name", "latitude", "longitude"]
-            result = ExcelExporter.export(waypoints, fields, path)
-            assert result is True
+            ExcelExporter.export(waypoints, fields, path)
             wb = load_workbook(path)
             ws = wb.active
             headers = [cell.value for cell in ws[1]]
@@ -68,8 +66,7 @@ class TestExcelExporter:
             path = f.name
         try:
             fields = ["name", "elevation", "description"]
-            result = ExcelExporter.export(waypoints, fields, path)
-            assert result is True
+            ExcelExporter.export(waypoints, fields, path)
             wb = load_workbook(path)
             ws = wb.active
             assert ws.cell(2, 1).value == "航点A"
@@ -90,8 +87,7 @@ class TestExcelExporter:
             path = f.name
         try:
             fields = ["name", "latitude", "longitude"]
-            result = ExcelExporter.export(waypoints, fields, path)
-            assert result is True
+            ExcelExporter.export(waypoints, fields, path)
             wb = load_workbook(path)
             ws = wb.active
             assert ws.max_row == 4
@@ -108,8 +104,7 @@ class TestExcelExporter:
             path = f.name
         try:
             fields = ["name"]
-            result = ExcelExporter.export([], fields, path)
-            assert result is True
+            ExcelExporter.export([], fields, path)
             wb = load_workbook(path)
             ws = wb.active
             assert ws.max_row == 1
