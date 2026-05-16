@@ -274,28 +274,34 @@ class ExcelExportDialog(tk.Toplevel):
         self.wp_deselect_all_btn = ttk.Button(wp_btn_row, text="取消全选", bootstyle=INFO, state=DISABLED)
         self.wp_deselect_all_btn.pack(side=LEFT, padx=2)
 
-        # 航点Treeview
+        # 航点Treeview（树形结构）
         tree_frame = ttk.Frame(right_frame)
         tree_frame.pack(fill=BOTH, expand=True)
 
-        columns = ("check", "index", "name", "lat", "lon")
-        self.waypoint_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=12)
-        self.waypoint_tree.heading("check", text="✓")
-        self.waypoint_tree.heading("index", text="序号")
-        self.waypoint_tree.heading("name", text="名称")
-        self.waypoint_tree.heading("lat", text="纬度")
-        self.waypoint_tree.heading("lon", text="经度")
+        columns = ("file_path", "check", "index", "name", "lat", "lon")
+        self.tree = ttk.Treeview(tree_frame, columns=columns, show="tree headings", height=15)
+        self.tree.heading("#0", text="文件")
+        self.tree.heading("check", text="✓")
+        self.tree.heading("index", text="序号")
+        self.tree.heading("name", text="名称")
+        self.tree.heading("lat", text="纬度")
+        self.tree.heading("lon", text="经度")
 
-        self.waypoint_tree.column("check", width=30, anchor=CENTER)
-        self.waypoint_tree.column("index", width=50, anchor=CENTER)
-        self.waypoint_tree.column("name", width=120)
-        self.waypoint_tree.column("lat", width=80)
-        self.waypoint_tree.column("lon", width=80)
+        self.tree.column("#0", width=200)
+        self.tree.column("file_path", width=0, stretch=False)  # 隐藏列
+        self.tree.column("check", width=30, anchor=CENTER)
+        self.tree.column("index", width=50, anchor=CENTER)
+        self.tree.column("name", width=120)
+        self.tree.column("lat", width=80)
+        self.tree.column("lon", width=80)
 
-        scrollbar = ttk.Scrollbar(tree_frame, orient=VERTICAL, command=self.waypoint_tree.yview)
-        self.waypoint_tree.configure(yscrollcommand=scrollbar.set)
-        self.waypoint_tree.pack(side=LEFT, fill=BOTH, expand=True)
+        scrollbar = ttk.Scrollbar(tree_frame, orient=VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side=LEFT, fill=BOTH, expand=True)
         scrollbar.pack(side=RIGHT, fill=Y)
+
+        # 点击切换勾选
+        self.tree.bind("<ButtonRelease-1>", self._on_tree_click)
 
         # ===== 底部按钮 =====
         btn_frame = ttk.Frame(main_frame)
