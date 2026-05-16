@@ -66,7 +66,6 @@ class ExcelExportDialog(tk.Toplevel):
                 })
 
             self.file_data[file_path] = waypoints
-            self._update_export_state()
         except Exception as e:
             messagebox.showerror("错误", f"加载文件失败:\n{file_path}\n{e}")
 
