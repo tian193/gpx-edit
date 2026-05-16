@@ -66,10 +66,104 @@ class ExcelExportDialog(tk.Toplevel):
                 })
 
             self.file_data[file_path] = waypoints
+            self._add_file_to_tree(file_path, waypoints)
         except Exception as e:
             messagebox.showerror("错误", f"加载文件失败:\n{file_path}\n{e}")
+        finally:
+            self._update_export_state()
 
+    def _add_file_to_tree(self, file_path, waypoints):
+        """将文件及其航点添加到树形控件"""
+        filename = os.path.basename(file_path)
+        checked_count = sum(1 for wp in waypoints if wp['checked'].get())
+        total_count = len(waypoints)
+
+        # 插入文件节点
+        file_node = self.tree.insert("", tk.END, text=f"▼ 📄 {filename} ({checked_count}/{total_count})",
+                                      values=(file_path,), open=True)
+
+        # 插入航点节点
+        for i, wp_info in enumerate(waypoints, 1):
+            wp = wp_info['waypoint']
+            check_mark = "✓" if wp_info['checked'].get() else ""
+            self.tree.insert(file_node, tk.END, values=(
+                file_path,
+                check_mark,
+                i,
+                wp.name or "",
+                f"{wp.latitude:.6f}",
+                f"{wp.longitude:.6f}"
+            ))
+
+    def _refresh_file_node(self, file_item, file_path):
+        """刷新文件节点显示（更新勾选计数）"""
+        waypoints = self.file_data.get(file_path, [])
+        checked_count = sum(1 for wp in waypoints if wp['checked'].get())
+        total_count = len(waypoints)
+        filename = os.path.basename(file_path)
+
+        # 更新文件节点文本
+        self.tree.item(file_item, text=f"▼ 📄 {filename} ({checked_count}/{total_count})")
+
+        # 更新子节点勾选状态
+        children = self.tree.get_children(file_item)
+        for i, child in enumerate(children):
+            if i < len(waypoints):
+                check_mark = "✓" if waypoints[i]['checked'].get() else ""
+                values = list(self.tree.item(child, "values"))
+                values[1] = check_mark
+                self.tree.item(child, values=values)
+
+    def _on_tree_click(self, event):
+        """点击树形节点"""
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+
+        if self.tree.parent(item) == "":
+            # 点击的是文件节点 → 切换该文件所有航点
+            self._toggle_file_waypoints(item)
+        else:
+            # 点击的是航点节点 → 切换单个航点
+            self._toggle_single_waypoint(item)
+
+    def _toggle_file_waypoints(self, file_item):
+        """切换文件节点下所有航点的勾选状态"""
+        file_path = self.tree.item(file_item, "values")[0]
+        waypoints = self.file_data.get(file_path, [])
+
+        # 计算新状态（如果全部选中则取消，否则全选）
+        all_checked = all(wp['checked'].get() for wp in waypoints)
+        new_state = not all_checked
+
+        for wp_info in waypoints:
+            wp_info['checked'].set(new_state)
+
+        self._refresh_file_node(file_item, file_path)
         self._update_export_state()
+
+    def _toggle_single_waypoint(self, wp_item):
+        """切换单个航点的勾选状态"""
+        parent = self.tree.parent(wp_item)
+        file_path = self.tree.item(parent, "values")[0]
+
+        # 获取航点索引
+        children = self.tree.get_children(parent)
+        idx = list(children).index(wp_item)
+
+        waypoints = self.file_data.get(file_path, [])
+        if 0 <= idx < len(waypoints):
+            wp_info = waypoints[idx]
+            wp_info['checked'].set(not wp_info['checked'].get())
+
+            # 更新显示
+            check_mark = "✓" if wp_info['checked'].get() else ""
+            values = list(self.tree.item(wp_item, "values"))
+            values[1] = check_mark
+            self.tree.item(wp_item, values=values)
+
+            self._refresh_file_node(parent, file_path)
+            self._update_export_state()
 
     def _add_files(self):
         """添加GPX文件（支持多选）"""
