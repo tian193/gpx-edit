@@ -993,11 +993,8 @@ class MainWindow(ttkb.Window):
 
     def export_waypoints_to_excel(self):
         """导出航点到Excel"""
-        waypoints = self.gpx_handler.get_waypoints()
-        if not waypoints:
-            messagebox.showwarning("提示", "当前文件无航点")
-            return
-        ExcelExportDialog(self, waypoints)
+        current_file = getattr(self, 'current_file', None)
+        ExcelExportDialog(self, initial_file=current_file)
 
     def show_about(self):
         """显示关于"""
