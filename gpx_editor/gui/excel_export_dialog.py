@@ -116,6 +116,9 @@ class ExcelExportDialog(tk.Toplevel):
 
     def _on_tree_click(self, event):
         """点击树形节点"""
+        region = self.tree.identify_region(event.x, event.y)
+        if region not in ("cell", "tree"):
+            return
         item = self.tree.identify_row(event.y)
         if not item:
             return
@@ -288,7 +291,7 @@ class ExcelExportDialog(tk.Toplevel):
         self.tree.heading("lon", text="经度")
 
         self.tree.column("#0", width=200)
-        self.tree.column("file_path", width=0, stretch=False)  # 隐藏列
+        self.tree.column("file_path", width=0, minwidth=0, stretch=False)  # 隐藏列
         self.tree.column("check", width=30, anchor=CENTER)
         self.tree.column("index", width=50, anchor=CENTER)
         self.tree.column("name", width=120)
