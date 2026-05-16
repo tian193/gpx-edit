@@ -11,6 +11,7 @@ from ttkbootstrap.constants import *
 import os
 import subprocess
 import platform
+from collections import OrderedDict
 
 from ..core.excel_exporter import ExcelExporter, FIELD_CONFIG
 
@@ -18,18 +19,17 @@ from ..core.excel_exporter import ExcelExporter, FIELD_CONFIG
 class ExcelExportDialog(tk.Toplevel):
     """航点Excel导出对话框"""
 
-    def __init__(self, parent, waypoints):
+    def __init__(self, parent, initial_file=None):
         """
         初始化对话框
         Args:
             parent: 父窗口
-            waypoints: gpxpy GPXWaypoint列表
+            initial_file: 初始加载的GPX文件路径（可选）
         """
         super().__init__(parent)
 
-        self.waypoints = waypoints
         self.title("导出航点到Excel")
-        self.geometry("700x500")
+        self.geometry("800x600")
         self.resizable(True, True)
 
         self.transient(parent)
@@ -40,11 +40,16 @@ class ExcelExportDialog(tk.Toplevel):
         for field_code, field_name in FIELD_CONFIG.items():
             self.field_vars[field_code] = tk.BooleanVar(value=True)
 
-        # 航点勾选数据
-        self.waypoint_checks = []  # [(BooleanVar, waypoint)]
+        # 文件数据存储: {文件路径: [waypoint_info, ...]}
+        self.file_data = OrderedDict()
 
         self._create_widgets()
         self._center_window()
+
+        # 自动加载初始文件
+        if initial_file and os.path.exists(initial_file):
+            self._load_gpx_file(initial_file)
+
         self._update_export_state()
 
     def _center_window(self):
