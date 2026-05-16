@@ -50,6 +50,26 @@ class ExcelExportDialog(tk.Toplevel):
         if initial_file and os.path.exists(initial_file):
             self._load_gpx_file(initial_file)
 
+    def _load_gpx_file(self, file_path):
+        """加载单个GPX文件"""
+        try:
+            import gpxpy
+            with open(file_path, 'r', encoding='utf-8') as f:
+                gpx = gpxpy.parse(f)
+
+            waypoints = []
+            for wp in gpx.waypoints:
+                waypoints.append({
+                    'waypoint': wp,
+                    'checked': tk.BooleanVar(value=True),
+                    'file_path': file_path
+                })
+
+            self.file_data[file_path] = waypoints
+            self._update_export_state()
+        except Exception as e:
+            messagebox.showerror("错误", f"加载文件失败:\n{file_path}\n{e}")
+
         self._update_export_state()
 
     def _center_window(self):
@@ -123,9 +143,6 @@ class ExcelExportDialog(tk.Toplevel):
         self.waypoint_tree.configure(yscrollcommand=scrollbar.set)
         self.waypoint_tree.pack(side=LEFT, fill=BOTH, expand=True)
         scrollbar.pack(side=RIGHT, fill=Y)
-
-        # 点击切换勾选（将在Task 6中重新实现）
-        # self.waypoint_tree.bind("<ButtonRelease-1>", self._on_waypoint_click)
 
         # ===== 底部按钮 =====
         btn_frame = ttk.Frame(main_frame)
