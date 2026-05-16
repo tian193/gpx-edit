@@ -9,6 +9,11 @@ from tkinter import ttk, filedialog, messagebox
 import ttkbootstrap as ttkb
 from ttkbootstrap.constants import *
 
+from ..core.gpx_handler import GpxHandler
+from tkintermapview import TkinterMapView
+from .undo_manager import UndoManager
+from .excel_export_dialog import ExcelExportDialog
+
 
 class MainWindow(ttkb.Window):
     """主窗口类"""
@@ -22,13 +27,19 @@ class MainWindow(ttkb.Window):
         )
 
         self.current_file = None
-        self.gpx_data = None
+        self.gpx_handler = GpxHandler()
+        self.is_modified = False
+        self.undo_manager = UndoManager()
+        self._clipboard = None  # {'type': 'waypoint'|'track', 'data': {...}}
+        self._satellite_overlay = False
 
         self._setup_ui()
         self._create_menu()
-        self._create_toolbar()
         self._create_main_layout()
         self._create_statusbar()
+
+        # 关闭窗口时检查未保存
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _setup_ui(self):
         """初始化界面"""
@@ -56,13 +67,23 @@ class MainWindow(ttkb.Window):
         file_menu.add_command(label="保存", command=self.save_file, accelerator="Ctrl+S")
         file_menu.add_command(label="另存为", command=self.save_as_file)
         file_menu.add_separator()
-        file_menu.add_command(label="退出", command=self.quit)
+        file_menu.add_command(label="退出", command=self._on_close)
 
         # 编辑菜单
         edit_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="编辑", menu=edit_menu)
-        edit_menu.add_command(label="添加航点", command=self.add_waypoint)
-        edit_menu.add_command(label="添加航迹", command=self.add_track)
+        edit_menu.add_command(label="撤销", command=self.undo, accelerator="Ctrl+Z")
+        edit_menu.add_command(label="重做", command=self.redo, accelerator="Ctrl+Y")
+        edit_menu.add_separator()
+        edit_menu.add_command(label="添加航点", command=self.add_waypoint, accelerator="Ctrl+Shift+W")
+        edit_menu.add_command(label="添加航迹", command=self.add_track, accelerator="Ctrl+Shift+T")
+        edit_menu.add_separator()
+        edit_menu.add_command(label="删除选中", command=self._delete_selected, accelerator="Delete")
+
+        # 视图菜单
+        view_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="视图", menu=view_menu)
+        view_menu.add_command(label="卫星图层", command=self._toggle_satellite)
 
         # 导出菜单
         export_menu = tk.Menu(menubar, tearoff=0)
@@ -78,6 +99,11 @@ class MainWindow(ttkb.Window):
         menubar.add_cascade(label="工具", menu=tools_menu)
         tools_menu.add_command(label="批量匹配航点", command=self.batch_match_waypoints)
         tools_menu.add_command(label="GPX属性编辑", command=self.gpx_editor)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="航迹操作", command=self.track_operations)
+        tools_menu.add_command(label="三方数据校验", command=self.verify_three_way)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="导出航点到Excel", command=self.export_waypoints_to_excel)
 
         # 帮助菜单
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -88,20 +114,14 @@ class MainWindow(ttkb.Window):
         self.bind("<Control-n>", lambda e: self.new_file())
         self.bind("<Control-o>", lambda e: self.open_file())
         self.bind("<Control-s>", lambda e: self.save_file())
-
-    def _create_toolbar(self):
-        """创建工具栏"""
-        toolbar = ttk.Frame(self)
-        toolbar.pack(fill=X, padx=5, pady=2)
-
-        ttk.Button(toolbar, text="新建", command=self.new_file, bootstyle=SUCCESS).pack(side=LEFT, padx=2)
-        ttk.Button(toolbar, text="打开", command=self.open_file, bootstyle=INFO).pack(side=LEFT, padx=2)
-        ttk.Button(toolbar, text="保存", command=self.save_file, bootstyle=PRIMARY).pack(side=LEFT, padx=2)
-
-        ttk.Separator(toolbar, orient=VERTICAL).pack(side=LEFT, fill=Y, padx=5)
-
-        ttk.Button(toolbar, text="添加航点", command=self.add_waypoint, bootstyle=WARNING).pack(side=LEFT, padx=2)
-        ttk.Button(toolbar, text="添加航迹", command=self.add_track, bootstyle=WARNING).pack(side=LEFT, padx=2)
+        self.bind("<Control-z>", lambda e: self.undo())
+        self.bind("<Control-y>", lambda e: self.redo())
+        self.bind("<Control-c>", lambda e: self._keyboard_copy())
+        self.bind("<Control-v>", lambda e: self._keyboard_paste())
+        self.bind("<Control-x>", lambda e: self._keyboard_cut())
+        self.bind("<Control-Shift-W>", lambda e: self.add_waypoint())
+        self.bind("<Control-Shift-T>", lambda e: self.add_track())
+        self.bind("<Delete>", lambda e: self._delete_selected())
 
     def _create_main_layout(self):
         """创建主布局"""
@@ -113,25 +133,62 @@ class MainWindow(ttkb.Window):
         left_frame = ttk.LabelFrame(paned, text="数据列表", padding=5)
         paned.add(left_frame, weight=1)
 
-        # 树形列表
-        self.tree = ttk.Treeview(left_frame, columns=("type", "name", "lat", "lon"), show="headings")
+        # 树形列表 + 滚动条
+        tree_frame = ttk.Frame(left_frame)
+        tree_frame.pack(fill=BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient=VERTICAL)
+        scrollbar.pack(side=RIGHT, fill=Y)
+
+        self.tree = ttk.Treeview(tree_frame, columns=("type", "name", "lat", "lon"),
+                                  show="tree headings", yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.tree.yview)
+
+        self.tree.heading("#0", text="")
         self.tree.heading("type", text="类型")
         self.tree.heading("name", text="名称")
         self.tree.heading("lat", text="纬度")
         self.tree.heading("lon", text="经度")
+        self.tree.column("#0", width=30, stretch=False)
         self.tree.column("type", width=60)
         self.tree.column("name", width=120)
         self.tree.column("lat", width=100)
         self.tree.column("lon", width=100)
         self.tree.pack(fill=BOTH, expand=True)
 
-        # 右侧面板 - 地图和详情
+        # 绑定事件
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self.tree.bind("<Double-1>", self._on_tree_double_click)
+        self.tree.bind("<Button-3>", self._on_tree_right_click)
+
+        # 右键菜单
+        self._create_context_menu()
+
+        # 右侧面板 - 地图
         right_frame = ttk.LabelFrame(paned, text="地图视图", padding=5)
         paned.add(right_frame, weight=2)
 
-        # 地图占位符
-        self.map_label = ttk.Label(right_frame, text="地图区域", anchor=CENTER)
-        self.map_label.pack(fill=BOTH, expand=True)
+        # 地图组件 - 高德地图
+        self.map_widget = TkinterMapView(right_frame, corner_radius=0)
+        self.map_widget.pack(fill=BOTH, expand=True)
+        self.map_widget.set_tile_server(
+            "https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
+            max_zoom=18
+        )
+        self.map_widget.set_position(39.9, 74.3)
+        self.map_widget.set_zoom(10)
+
+        # 地图标记引用
+        self._map_markers = []
+        self._map_paths = []
+
+        # 地图鼠标悬停显示坐标
+        self.map_widget.canvas.bind("<Motion>", self._on_map_mouse_move)
+
+        # 地图右键菜单 - 在此添加航点
+        self.map_widget.add_right_click_menu_command(
+            "在此添加航点", self._add_waypoint_at_map_coords, pass_coords=True
+        )
 
     def _create_statusbar(self):
         """创建状态栏"""
@@ -141,30 +198,654 @@ class MainWindow(ttkb.Window):
         self.status_label = ttk.Label(statusbar, text="就绪")
         self.status_label.pack(side=LEFT)
 
+        self.count_label = ttk.Label(statusbar, text="")
+        self.count_label.pack(side=LEFT, padx=20)
+
         self.file_label = ttk.Label(statusbar, text="未打开文件")
         self.file_label.pack(side=RIGHT)
 
+    def _update_status_counts(self):
+        """更新状态栏的航点/航迹计数"""
+        if self.gpx_handler.gpx:
+            wpt_count = len(self.gpx_handler.get_waypoints())
+            trk_count = len(self.gpx_handler.get_tracks())
+            self.count_label.config(text=f"航点: {wpt_count}  航迹: {trk_count}")
+        else:
+            self.count_label.config(text="")
+
+    # ========== 树形列表 ==========
+
+    def _populate_tree(self):
+        """用GPX数据填充树形列表"""
+        self.tree.delete(*self.tree.get_children())
+
+        if not self.gpx_handler.gpx:
+            return
+
+        # 航点分组
+        waypoints = self.gpx_handler.get_waypoints()
+        if waypoints:
+            wpt_group = self.tree.insert("", "end", iid="group_waypoints",
+                                          text="航点", values=("航点", f"({len(waypoints)})", "", ""),
+                                          open=True)
+            for i, wpt in enumerate(waypoints):
+                name = wpt.name or f"航点{i+1}"
+                lat = f"{wpt.latitude:.6f}" if wpt.latitude is not None else ""
+                lon = f"{wpt.longitude:.6f}" if wpt.longitude is not None else ""
+                self.tree.insert(wpt_group, "end", iid=f"wpt_{i}",
+                                  text="", values=("", name, lat, lon))
+
+        # 航迹分组
+        tracks = self.gpx_handler.get_tracks()
+        if tracks:
+            trk_group = self.tree.insert("", "end", iid="group_tracks",
+                                          text="航迹", values=("航迹", f"({len(tracks)})", "", ""),
+                                          open=True)
+            for i, track in enumerate(tracks):
+                name = track.name or f"航迹{i+1}"
+                point_count = sum(len(seg.points) for seg in track.segments)
+                self.tree.insert(trk_group, "end", iid=f"trk_{i}",
+                                  text="", values=("", name, f"{point_count}点", ""))
+
+        self._update_status_counts()
+        self._update_map()
+
+    def _on_tree_select(self, event):
+        """树形列表选择事件"""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        iid = selected[0]
+        if iid.startswith("wpt_"):
+            index = int(iid.split("_")[1])
+            wpt = self.gpx_handler.get_waypoints()[index]
+            self.status_label.config(text=f"选中航点: {wpt.name} ({wpt.latitude:.6f}, {wpt.longitude:.6f})")
+        elif iid.startswith("trk_"):
+            index = int(iid.split("_")[1])
+            track = self.gpx_handler.get_tracks()[index]
+            point_count = sum(len(seg.points) for seg in track.segments)
+            self.status_label.config(text=f"选中航迹: {track.name} ({point_count}点)")
+
+    def _on_tree_double_click(self, event):
+        """树形列表双击事件"""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        iid = selected[0]
+        if iid.startswith("wpt_"):
+            index = int(iid.split("_")[1])
+            self.edit_waypoint(index)
+        elif iid.startswith("trk_"):
+            index = int(iid.split("_")[1])
+            self.edit_track(index)
+
+    # ========== 地图 ==========
+
+    def _toggle_satellite(self):
+        """切换卫星图层"""
+        if self._satellite_overlay:
+            self.map_widget.set_overlay_tile_server(None)
+            self._satellite_overlay = False
+            self.status_label.config(text="已关闭卫星图层")
+        else:
+            self.map_widget.set_overlay_tile_server(
+                "https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}"
+            )
+            self._satellite_overlay = True
+            self.status_label.config(text="已开启卫星图层")
+
+    def _on_map_mouse_move(self, event):
+        """鼠标悬停显示坐标"""
+        try:
+            lat, lon = self.map_widget.convert_canvas_coords_to_decimal_coords(event.x, event.y)
+            self.status_label.config(text=f"坐标: {lat:.6f}, {lon:.6f}")
+        except Exception:
+            pass
+
+    def _add_waypoint_at_map_coords(self, coords):
+        """在地图右键位置添加航点"""
+        from .waypoint_dialog import WaypointDialog
+        self._ensure_gpx_loaded()
+        lat, lon = coords
+        dialog = WaypointDialog(self, lat=lat, lon=lon)
+        if dialog.result:
+            name, lat, lon, ele, desc = dialog.result
+            self.gpx_handler.add_waypoint(name, lat, lon, ele, desc)
+            self.undo_manager.push({
+                'type': 'add_waypoint',
+                'data': {'name': name, 'lat': lat, 'lon': lon, 'ele': ele, 'desc': desc},
+                'reverse_data': {'index': len(self.gpx_handler.get_waypoints()) - 1}
+            })
+            self._populate_tree()
+            self._mark_modified()
+            self.status_label.config(text=f"已添加航点: {name}")
+
+    def _update_map(self):
+        """更新地图显示"""
+        for marker in self._map_markers:
+            marker.delete()
+        for path in self._map_paths:
+            path.delete()
+        self._map_markers.clear()
+        self._map_paths.clear()
+
+        if not self.gpx_handler.gpx:
+            return
+
+        # 添加航点标记
+        for i, wpt in enumerate(self.gpx_handler.get_waypoints()):
+            if wpt.latitude is not None and wpt.longitude is not None:
+                name = wpt.name or f"航点{i+1}"
+                marker = self.map_widget.set_marker(wpt.latitude, wpt.longitude, text=name)
+                self._map_markers.append(marker)
+
+        # 添加航迹路径
+        for i, track in enumerate(self.gpx_handler.get_tracks()):
+            for segment in track.segments:
+                if len(segment.points) >= 2:
+                    coords = [(p.latitude, p.longitude) for p in segment.points
+                              if p.latitude is not None and p.longitude is not None]
+                    if len(coords) >= 2:
+                        path = self.map_widget.set_path(coords)
+                        self._map_paths.append(path)
+
+        self._zoom_to_fit()
+
+    def _zoom_to_fit(self):
+        """缩放地图以显示所有数据"""
+        bounds = self.gpx_handler.get_bounds()
+        if bounds:
+            min_lat, min_lon, max_lat, max_lon = bounds
+            center_lat = (min_lat + max_lat) / 2
+            center_lon = (min_lon + max_lon) / 2
+            self.map_widget.set_position(center_lat, center_lon)
+
+            lat_diff = max_lat - min_lat
+            lon_diff = max_lon - min_lon
+            max_diff = max(lat_diff, lon_diff)
+            if max_diff > 0:
+                if max_diff > 10:
+                    zoom = 4
+                elif max_diff > 5:
+                    zoom = 5
+                elif max_diff > 2:
+                    zoom = 6
+                elif max_diff > 1:
+                    zoom = 7
+                elif max_diff > 0.5:
+                    zoom = 8
+                elif max_diff > 0.1:
+                    zoom = 10
+                else:
+                    zoom = 12
+                self.map_widget.set_zoom(zoom)
+
+    # ========== 右键菜单 ==========
+
+    def _create_context_menu(self):
+        """创建右键菜单"""
+        # 航点右键菜单
+        self.wpt_context_menu = tk.Menu(self, tearoff=0)
+        self.wpt_context_menu.add_command(label="在地图显示", command=self._ctx_wpt_show_on_map)
+        self.wpt_context_menu.add_command(label="航点属性", command=self._ctx_wpt_properties)
+        self.wpt_context_menu.add_separator()
+        self.wpt_context_menu.add_command(label="复制", command=self._ctx_wpt_copy)
+        self.wpt_context_menu.add_command(label="粘贴", command=self._ctx_wpt_paste)
+        self.wpt_context_menu.add_command(label="剪切", command=self._ctx_wpt_cut)
+        self.wpt_context_menu.add_separator()
+        self.wpt_context_menu.add_command(label="移动航点", command=self._ctx_wpt_move)
+        self.wpt_context_menu.add_command(label="删除", command=self._ctx_delete_waypoint)
+
+        # 航迹右键菜单
+        self.trk_context_menu = tk.Menu(self, tearoff=0)
+        self.trk_context_menu.add_command(label="在地图显示", command=self._ctx_trk_show_on_map)
+        self.trk_context_menu.add_command(label="航迹属性", command=self._ctx_trk_properties)
+        self.trk_context_menu.add_separator()
+        self.trk_context_menu.add_command(label="复制", command=self._ctx_trk_copy)
+        self.trk_context_menu.add_command(label="粘贴", command=self._ctx_trk_paste)
+        self.trk_context_menu.add_command(label="剪切", command=self._ctx_trk_cut)
+        self.trk_context_menu.add_separator()
+        self.trk_context_menu.add_command(label="航迹操作", command=self.track_operations)
+        self.trk_context_menu.add_command(label="删除", command=self._ctx_delete_track)
+
+        # 空白区右键菜单
+        self.empty_context_menu = tk.Menu(self, tearoff=0)
+        self.empty_context_menu.add_command(label="粘贴", command=self._ctx_paste_here)
+        self.empty_context_menu.add_separator()
+        self.empty_context_menu.add_command(label="添加航点", command=self.add_waypoint)
+        self.empty_context_menu.add_command(label="添加航迹", command=self.add_track)
+
+    def _on_tree_right_click(self, event):
+        """树形列表右键点击"""
+        item = self.tree.identify_row(event.y)
+        if not item:
+            # 更新空白区粘贴状态
+            paste_state = NORMAL if self._clipboard else DISABLED
+            self.empty_context_menu.entryconfigure("粘贴", state=paste_state)
+            self.empty_context_menu.post(event.x_root, event.y_root)
+            return
+
+        self.tree.selection_set(item)
+        iid = item
+
+        if iid.startswith("wpt_"):
+            self._ctx_wpt_index = int(iid.split("_")[1])
+            # 更新粘贴状态
+            paste_state = NORMAL if self._clipboard and self._clipboard['type'] == 'waypoint' else DISABLED
+            self.wpt_context_menu.entryconfigure("粘贴", state=paste_state)
+            self.wpt_context_menu.post(event.x_root, event.y_root)
+        elif iid.startswith("trk_"):
+            self._ctx_trk_index = int(iid.split("_")[1])
+            # 更新粘贴状态
+            paste_state = NORMAL if self._clipboard and self._clipboard['type'] == 'track' else DISABLED
+            self.trk_context_menu.entryconfigure("粘贴", state=paste_state)
+            self.trk_context_menu.post(event.x_root, event.y_root)
+
+    # 航点右键菜单方法
+    def _ctx_wpt_show_on_map(self):
+        """在地图上居中显示航点"""
+        if not hasattr(self, '_ctx_wpt_index'):
+            return
+        wpt = self.gpx_handler.get_waypoints()[self._ctx_wpt_index]
+        if wpt.latitude and wpt.longitude:
+            self.map_widget.set_position(wpt.latitude, wpt.longitude)
+            self.map_widget.set_zoom(15)
+
+    def _ctx_wpt_properties(self):
+        """打开航点属性对话框"""
+        if not hasattr(self, '_ctx_wpt_index'):
+            return
+        from .properties_dialog import WaypointPropertiesDialog
+        wpt = self.gpx_handler.get_waypoints()[self._ctx_wpt_index]
+        dialog = WaypointPropertiesDialog(self, wpt)
+        if dialog.result:
+            self._populate_tree()
+            self._mark_modified()
+
+    def _ctx_wpt_copy(self):
+        """复制航点到剪贴板"""
+        if not hasattr(self, '_ctx_wpt_index'):
+            return
+        wpt = self.gpx_handler.get_waypoints()[self._ctx_wpt_index]
+        self._clipboard = {'type': 'waypoint', 'data': self._serialize_waypoint(wpt)}
+        # 同时复制坐标文本到系统剪贴板
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(f"{wpt.latitude:.6f} {wpt.longitude:.6f}")
+        except Exception:
+            pass
+        self.status_label.config(text=f"已复制航点: {wpt.name}")
+
+    def _ctx_wpt_paste(self):
+        """粘贴航点数据到当前选中航点"""
+        if not self._clipboard or self._clipboard['type'] != 'waypoint':
+            return
+        if not hasattr(self, '_ctx_wpt_index'):
+            return
+        wpt = self.gpx_handler.get_waypoints()[self._ctx_wpt_index]
+        self._apply_waypoint_data(wpt, self._clipboard['data'])
+        self._populate_tree()
+        self._mark_modified()
+        self.status_label.config(text="已粘贴航点数据")
+
+    def _ctx_wpt_cut(self):
+        """剪切航点"""
+        if not hasattr(self, '_ctx_wpt_index'):
+            return
+        self._ctx_wpt_copy()
+        self.delete_waypoint(self._ctx_wpt_index)
+
+    def _ctx_wpt_move(self):
+        """移动航点到新位置"""
+        if not hasattr(self, '_ctx_wpt_index'):
+            return
+        from .move_waypoint_dialog import MoveWaypointDialog
+        wpt = self.gpx_handler.get_waypoints()[self._ctx_wpt_index]
+        dialog = MoveWaypointDialog(self, self.map_widget, wpt)
+        if dialog.result:
+            old_lat, old_lon = wpt.latitude, wpt.longitude
+            new_lat, new_lon = dialog.result
+            wpt.latitude = new_lat
+            wpt.longitude = new_lon
+            self.undo_manager.push({
+                'type': 'edit_waypoint',
+                'data': {'index': self._ctx_wpt_index, 'lat': new_lat, 'lon': new_lon,
+                         'name': wpt.name, 'ele': wpt.elevation, 'desc': wpt.description},
+                'reverse_data': {'index': self._ctx_wpt_index, 'lat': old_lat, 'lon': old_lon,
+                                 'name': wpt.name, 'ele': wpt.elevation, 'desc': wpt.description}
+            })
+            self._populate_tree()
+            self._mark_modified()
+            self.status_label.config(text=f"已移动航点: {wpt.name}")
+
+    def _ctx_delete_waypoint(self):
+        """右键菜单 - 删除航点"""
+        if hasattr(self, '_ctx_wpt_index'):
+            self.delete_waypoint(self._ctx_wpt_index)
+
+    # 航迹右键菜单方法
+    def _ctx_trk_show_on_map(self):
+        """缩放地图到航迹范围"""
+        if not hasattr(self, '_ctx_trk_index'):
+            return
+        track = self.gpx_handler.get_tracks()[self._ctx_trk_index]
+        bounds = track.get_bounds()
+        if bounds:
+            self.map_widget.fit_bounding_box(
+                (bounds.max_latitude, bounds.min_longitude),
+                (bounds.min_latitude, bounds.max_longitude)
+            )
+
+    def _ctx_trk_properties(self):
+        """打开航迹属性对话框"""
+        if not hasattr(self, '_ctx_trk_index'):
+            return
+        from .properties_dialog import TrackPropertiesDialog
+        track = self.gpx_handler.get_tracks()[self._ctx_trk_index]
+        dialog = TrackPropertiesDialog(self, track)
+        if dialog.result:
+            self._populate_tree()
+            self._mark_modified()
+
+    def _ctx_trk_copy(self):
+        """复制航迹到剪贴板"""
+        if not hasattr(self, '_ctx_trk_index'):
+            return
+        track = self.gpx_handler.get_tracks()[self._ctx_trk_index]
+        self._clipboard = {'type': 'track', 'data': self._serialize_track(track)}
+        self.status_label.config(text=f"已复制航迹: {track.name}")
+
+    def _ctx_trk_paste(self):
+        """粘贴航迹（追加）"""
+        if not self._clipboard or self._clipboard['type'] != 'track':
+            return
+        self._ensure_gpx_loaded()
+        track = self._deserialize_track(self._clipboard['data'])
+        self.gpx_handler.gpx.tracks.append(track)
+        self._populate_tree()
+        self._mark_modified()
+        self.status_label.config(text=f"已粘贴航迹: {track.name}")
+
+    def _ctx_trk_cut(self):
+        """剪切航迹"""
+        if not hasattr(self, '_ctx_trk_index'):
+            return
+        self._ctx_trk_copy()
+        self.delete_track(self._ctx_trk_index)
+
+    def _ctx_delete_track(self):
+        """右键菜单 - 删除航迹"""
+        if hasattr(self, '_ctx_trk_index'):
+            self.delete_track(self._ctx_trk_index)
+
+    def _ctx_paste_here(self):
+        """在空白区粘贴"""
+        if not self._clipboard:
+            return
+        self._ensure_gpx_loaded()
+        if self._clipboard['type'] == 'waypoint':
+            wpt = self._deserialize_waypoint(self._clipboard['data'])
+            self.gpx_handler.gpx.waypoints.append(wpt)
+            self._populate_tree()
+            self._mark_modified()
+            self.status_label.config(text="已粘贴航点")
+        elif self._clipboard['type'] == 'track':
+            self._ctx_trk_paste()
+
+    # ========== 序列化辅助 ==========
+
+    def _serialize_waypoint(self, wpt):
+        """序列化航点数据"""
+        return {
+            'name': wpt.name, 'latitude': wpt.latitude, 'longitude': wpt.longitude,
+            'elevation': wpt.elevation, 'description': wpt.description,
+            'comment': wpt.comment, 'symbol': wpt.symbol, 'time': wpt.time,
+            'type': wpt.type, 'source': wpt.source,
+        }
+
+    def _deserialize_waypoint(self, data):
+        """反序列化航点数据"""
+        import gpxpy.gpx
+        from datetime import datetime
+        wpt = gpxpy.gpx.GPXWaypoint(
+            latitude=data['latitude'], longitude=data['longitude'],
+            elevation=data.get('elevation'), name=data.get('name'),
+            description=data.get('description'), time=data.get('time') or datetime.now(),
+            comment=data.get('comment'), symbol=data.get('symbol'),
+            type=data.get('type'), source=data.get('source'),
+        )
+        return wpt
+
+    def _serialize_track(self, track):
+        """序列化航迹数据"""
+        segments = []
+        for seg in track.segments:
+            points = []
+            for p in seg.points:
+                points.append({
+                    'latitude': p.latitude, 'longitude': p.longitude,
+                    'elevation': p.elevation, 'time': p.time,
+                })
+            segments.append(points)
+        return {
+            'name': track.name, 'description': track.description,
+            'comment': track.comment, 'type': track.type,
+            'number': track.number, 'source': track.source,
+            'segments': segments,
+        }
+
+    def _deserialize_track(self, data):
+        """反序列化航迹数据"""
+        import gpxpy.gpx
+        track = gpxpy.gpx.GPXTrack()
+        track.name = data.get('name')
+        track.description = data.get('description')
+        track.comment = data.get('comment')
+        track.type = data.get('type')
+        track.number = data.get('number')
+        track.source = data.get('source')
+        for seg_data in data.get('segments', []):
+            seg = gpxpy.gpx.GPXTrackSegment()
+            for p in seg_data:
+                pt = gpxpy.gpx.GPXTrackPoint(
+                    latitude=p['latitude'], longitude=p['longitude'],
+                    elevation=p.get('elevation'), time=p.get('time'),
+                )
+                seg.points.append(pt)
+            track.segments.append(seg)
+        return track
+
+    def _apply_waypoint_data(self, wpt, data):
+        """将序列化数据应用到已有航点"""
+        wpt.name = data.get('name')
+        wpt.latitude = data.get('latitude')
+        wpt.longitude = data.get('longitude')
+        wpt.elevation = data.get('elevation')
+        wpt.description = data.get('description')
+        wpt.comment = data.get('comment')
+        wpt.symbol = data.get('symbol')
+        wpt.type = data.get('type')
+        wpt.source = data.get('source')
+
+    # ========== 键盘快捷键 ==========
+
+    def _keyboard_copy(self):
+        """键盘复制"""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        iid = selected[0]
+        if iid.startswith("wpt_"):
+            self._ctx_wpt_index = int(iid.split("_")[1])
+            self._ctx_wpt_copy()
+        elif iid.startswith("trk_"):
+            self._ctx_trk_index = int(iid.split("_")[1])
+            self._ctx_trk_copy()
+
+    def _keyboard_paste(self):
+        """键盘粘贴"""
+        selected = self.tree.selection()
+        if not selected:
+            # 没有选中项，粘贴到空白区
+            self._ctx_paste_here()
+            return
+        iid = selected[0]
+        if iid.startswith("wpt_") and self._clipboard and self._clipboard['type'] == 'waypoint':
+            self._ctx_wpt_index = int(iid.split("_")[1])
+            self._ctx_wpt_paste()
+        elif iid.startswith("trk_") and self._clipboard and self._clipboard['type'] == 'track':
+            self._ctx_trk_index = int(iid.split("_")[1])
+            self._ctx_trk_paste()
+
+    def _keyboard_cut(self):
+        """键盘剪切"""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        iid = selected[0]
+        if iid.startswith("wpt_"):
+            self._ctx_wpt_index = int(iid.split("_")[1])
+            self._ctx_wpt_cut()
+        elif iid.startswith("trk_"):
+            self._ctx_trk_index = int(iid.split("_")[1])
+            self._ctx_trk_cut()
+
+    # ========== 删除 ==========
+
+    def _delete_selected(self):
+        """删除选中项"""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        iid = selected[0]
+        if iid.startswith("wpt_"):
+            index = int(iid.split("_")[1])
+            self.delete_waypoint(index)
+        elif iid.startswith("trk_"):
+            index = int(iid.split("_")[1])
+            self.delete_track(index)
+
+    # ========== 撤销/重做 ==========
+
+    def undo(self):
+        """撤销"""
+        cmd = self.undo_manager.undo()
+        if cmd:
+            self._execute_undo_command(cmd, is_redo=False)
+            self.status_label.config(text="已撤销")
+
+    def redo(self):
+        """重做"""
+        cmd = self.undo_manager.redo()
+        if cmd:
+            self._execute_undo_command(cmd, is_redo=True)
+            self.status_label.config(text="已重做")
+
+    def _execute_undo_command(self, cmd, is_redo=False):
+        """执行撤销/重做命令"""
+        cmd_type = cmd['type']
+
+        if cmd_type == 'add_waypoint':
+            if is_redo:
+                data = cmd['data']
+                self.gpx_handler.add_waypoint(data['name'], data['lat'], data['lon'], data.get('ele'), data.get('desc'))
+            else:
+                self.gpx_handler.remove_waypoint(cmd['reverse_data']['index'])
+
+        elif cmd_type == 'delete_waypoint':
+            if is_redo:
+                self.gpx_handler.remove_waypoint(cmd['data']['index'])
+            else:
+                data = cmd['reverse_data']
+                self.gpx_handler.add_waypoint(data['name'], data['lat'], data['lon'], data.get('ele'), data.get('desc'))
+
+        elif cmd_type == 'edit_waypoint':
+            wpt = self.gpx_handler.get_waypoints()[cmd['data']['index']]
+            data = cmd['data'] if is_redo else cmd['reverse_data']
+            wpt.name = data['name']
+            wpt.latitude = data['lat']
+            wpt.longitude = data['lon']
+            wpt.elevation = data.get('ele')
+            wpt.description = data.get('desc')
+
+        self._populate_tree()
+        self._mark_modified()
+
+    # ========== 状态标记 ==========
+
+    def _mark_modified(self):
+        """标记文件已修改"""
+        self.is_modified = True
+        title = self.title()
+        if not title.endswith("*"):
+            self.title(title + " *")
+
+    def _clear_modified(self):
+        """清除修改标记"""
+        self.is_modified = False
+        title = self.title()
+        if title.endswith(" *"):
+            self.title(title[:-2])
+
+    def _on_close(self):
+        """窗口关闭事件"""
+        if self.is_modified:
+            result = messagebox.askyesnocancel("保存确认", "文件已修改，是否保存？")
+            if result is True:
+                self.save_file()
+            elif result is None:
+                return
+        self.destroy()
+
+    # ========== 文件操作 ==========
+
     def new_file(self):
         """新建文件"""
+        if self.is_modified:
+            result = messagebox.askyesnocancel("保存确认", "文件已修改，是否保存？")
+            if result is True:
+                self.save_file()
+            elif result is None:
+                return
+
+        self.gpx_handler.new()
         self.current_file = None
-        self.gpx_data = None
-        self.tree.delete(*self.tree.get_children())
+        self._populate_tree()
         self.file_label.config(text="未打开文件")
         self.status_label.config(text="已新建空白文件")
+        self._clear_modified()
 
     def open_file(self):
         """打开文件"""
+        if self.is_modified:
+            result = messagebox.askyesnocancel("保存确认", "文件已修改，是否保存？")
+            if result is True:
+                self.save_file()
+            elif result is None:
+                return
+
         filetypes = [("GPX文件", "*.gpx"), ("所有文件", "*.*")]
         filepath = filedialog.askopenfilename(filetypes=filetypes)
         if filepath:
-            self.current_file = filepath
-            self.file_label.config(text=filepath)
-            self.status_label.config(text="已打开文件")
+            try:
+                self.gpx_handler.load(filepath)
+                self.current_file = filepath
+                self._populate_tree()
+                self.file_label.config(text=filepath)
+                self.status_label.config(text="已打开文件")
+                self._clear_modified()
+            except Exception as e:
+                messagebox.showerror("打开失败", f"无法打开文件:\n{e}")
 
     def save_file(self):
         """保存文件"""
         if self.current_file:
-            self.status_label.config(text="已保存")
+            try:
+                self.gpx_handler.save(self.current_file)
+                self.status_label.config(text="已保存")
+                self._clear_modified()
+            except Exception as e:
+                messagebox.showerror("保存失败", f"无法保存文件:\n{e}")
         else:
             self.save_as_file()
 
@@ -173,33 +854,150 @@ class MainWindow(ttkb.Window):
         filetypes = [("GPX文件", "*.gpx")]
         filepath = filedialog.asksaveasfilename(defaultextension=".gpx", filetypes=filetypes)
         if filepath:
-            self.current_file = filepath
-            self.file_label.config(text=filepath)
-            self.status_label.config(text="已保存")
+            try:
+                self.gpx_handler.save(filepath)
+                self.current_file = filepath
+                self.file_label.config(text=filepath)
+                self.status_label.config(text="已保存")
+                self._clear_modified()
+            except Exception as e:
+                messagebox.showerror("保存失败", f"无法保存文件:\n{e}")
+
+    def _ensure_gpx_loaded(self):
+        """确保已有GPX数据，没有则新建"""
+        if self.gpx_handler.gpx is None:
+            self.gpx_handler.new()
+
+    # ========== 航点/航迹操作 ==========
 
     def add_waypoint(self):
         """添加航点"""
-        self.status_label.config(text="添加航点功能待实现")
+        from .waypoint_dialog import WaypointDialog
+        self._ensure_gpx_loaded()
+        dialog = WaypointDialog(self)
+        if dialog.result:
+            name, lat, lon, ele, desc = dialog.result
+            self.gpx_handler.add_waypoint(name, lat, lon, ele, desc)
+            index = len(self.gpx_handler.get_waypoints()) - 1
+            self.undo_manager.push({
+                'type': 'add_waypoint',
+                'data': {'name': name, 'lat': lat, 'lon': lon, 'ele': ele, 'desc': desc},
+                'reverse_data': {'index': index}
+            })
+            self._populate_tree()
+            self._mark_modified()
+            self.status_label.config(text=f"已添加航点: {name}")
+
+    def edit_waypoint(self, index):
+        """编辑航点"""
+        from .waypoint_dialog import WaypointDialog
+        waypoints = self.gpx_handler.get_waypoints()
+        if 0 <= index < len(waypoints):
+            wpt = waypoints[index]
+            old_data = {'name': wpt.name, 'lat': wpt.latitude, 'lon': wpt.longitude,
+                        'ele': wpt.elevation, 'desc': wpt.description}
+            dialog = WaypointDialog(self, waypoint=wpt)
+            if dialog.result:
+                name, lat, lon, ele, desc = dialog.result
+                new_data = {'name': name, 'lat': lat, 'lon': lon, 'ele': ele, 'desc': desc}
+                wpt.name = name
+                wpt.latitude = lat
+                wpt.longitude = lon
+                wpt.elevation = ele
+                wpt.description = desc
+                self.undo_manager.push({
+                    'type': 'edit_waypoint',
+                    'data': {'index': index, **new_data},
+                    'reverse_data': {'index': index, **old_data}
+                })
+                self._populate_tree()
+                self._mark_modified()
+                self.status_label.config(text=f"已修改航点: {name}")
+
+    def delete_waypoint(self, index):
+        """删除航点"""
+        waypoints = self.gpx_handler.get_waypoints()
+        if 0 <= index < len(waypoints):
+            wpt = waypoints[index]
+            name = wpt.name or f"航点{index+1}"
+            if messagebox.askyesno("确认删除", f"确定要删除航点 \"{name}\" 吗？"):
+                old_data = {'name': wpt.name, 'lat': wpt.latitude, 'lon': wpt.longitude,
+                            'ele': wpt.elevation, 'desc': wpt.description}
+                self.gpx_handler.remove_waypoint(index)
+                self.undo_manager.push({
+                    'type': 'delete_waypoint',
+                    'data': {'index': index},
+                    'reverse_data': old_data
+                })
+                self._populate_tree()
+                self._mark_modified()
+                self.status_label.config(text=f"已删除航点: {name}")
 
     def add_track(self):
         """添加航迹"""
-        self.status_label.config(text="添加航迹功能待实现")
+        from .track_dialog import TrackDialog
+        self._ensure_gpx_loaded()
+        dialog = TrackDialog(self)
+        if dialog.result:
+            name = dialog.result
+            self.gpx_handler.add_track(name, [])
+            self._populate_tree()
+            self._mark_modified()
+            self.status_label.config(text=f"已添加航迹: {name}")
+
+    def edit_track(self, index):
+        """编辑航迹"""
+        from .track_dialog import TrackDialog
+        tracks = self.gpx_handler.get_tracks()
+        if 0 <= index < len(tracks):
+            track = tracks[index]
+            dialog = TrackDialog(self, track=track)
+            if dialog.result:
+                track.name = dialog.result
+                self._populate_tree()
+                self._mark_modified()
+                self.status_label.config(text=f"已修改航迹: {track.name}")
+
+    def delete_track(self, index):
+        """删除航迹"""
+        tracks = self.gpx_handler.get_tracks()
+        if 0 <= index < len(tracks):
+            name = tracks[index].name or f"航迹{index+1}"
+            if messagebox.askyesno("确认删除", f"确定要删除航迹 \"{name}\" 吗？"):
+                self.gpx_handler.remove_track(index)
+                self._populate_tree()
+                self._mark_modified()
+                self.status_label.config(text=f"已删除航迹: {name}")
+
+    # ========== 工具菜单 ==========
 
     def export_txt(self):
         """导出TXT"""
-        self.status_label.config(text="导出TXT功能待实现")
+        from .batch_export_dialog import SingleExportDialog
+        SingleExportDialog.export_txt(self)
 
     def export_gdb(self):
         """导出GDB"""
-        self.status_label.config(text="导出GDB功能待实现")
+        from .batch_export_dialog import SingleExportDialog
+        SingleExportDialog.export_gdb(self)
 
     def batch_export_txt(self):
         """批量导出TXT"""
-        self.status_label.config(text="批量导出TXT功能待实现")
+        from .batch_export_dialog import BatchExportDialog
+        BatchExportDialog(self, export_type="txt")
 
     def batch_export_gdb(self):
         """批量导出GDB"""
-        self.status_label.config(text="批量导出GDB功能待实现")
+        from .batch_export_dialog import BatchExportDialog
+        BatchExportDialog(self, export_type="gdb")
+
+    def export_waypoints_to_excel(self):
+        """导出航点到Excel"""
+        waypoints = self.gpx_handler.get_waypoints()
+        if not waypoints:
+            messagebox.showwarning("提示", "当前文件无航点")
+            return
+        ExcelExportDialog(self, waypoints)
 
     def show_about(self):
         """显示关于"""
@@ -214,3 +1012,19 @@ class MainWindow(ttkb.Window):
         """打开GPX属性编辑器对话框"""
         from .gpx_editor_dialog import GpxEditorDialog
         GpxEditorDialog(self)
+
+    def track_operations(self):
+        """打开航迹操作对话框"""
+        if not self.gpx_handler.get_tracks():
+            messagebox.showinfo("提示", "没有可操作的航迹，请先打开包含航迹的GPX文件")
+            return
+        from .track_operations_dialog import TrackOperationsDialog
+        dialog = TrackOperationsDialog(self)
+        if dialog.result:
+            self._populate_tree()
+            self._mark_modified()
+
+    def verify_three_way(self):
+        """打开三方数据校验对话框"""
+        from .verification_dialog import VerificationDialog
+        VerificationDialog(self)
