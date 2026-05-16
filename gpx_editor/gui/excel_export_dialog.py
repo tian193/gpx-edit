@@ -93,11 +93,13 @@ class ExcelExportDialog(tk.Toplevel):
         right_frame = ttk.LabelFrame(top_frame, text="选择航点", padding=10)
         right_frame.pack(side=RIGHT, fill=BOTH, expand=True, padx=(5, 0))
 
-        # 全选按钮
+        # 全选按钮（将在Task 6中重新实现）
         wp_btn_row = ttk.Frame(right_frame)
         wp_btn_row.pack(fill=X, pady=(0, 5))
-        ttk.Button(wp_btn_row, text="全选", command=self._select_all_waypoints, bootstyle=INFO).pack(side=LEFT, padx=2)
-        ttk.Button(wp_btn_row, text="取消全选", command=self._deselect_all_waypoints, bootstyle=INFO).pack(side=LEFT, padx=2)
+        self.wp_select_all_btn = ttk.Button(wp_btn_row, text="全选", bootstyle=INFO, state=DISABLED)
+        self.wp_select_all_btn.pack(side=LEFT, padx=2)
+        self.wp_deselect_all_btn = ttk.Button(wp_btn_row, text="取消全选", bootstyle=INFO, state=DISABLED)
+        self.wp_deselect_all_btn.pack(side=LEFT, padx=2)
 
         # 航点Treeview
         tree_frame = ttk.Frame(right_frame)
@@ -122,11 +124,8 @@ class ExcelExportDialog(tk.Toplevel):
         self.waypoint_tree.pack(side=LEFT, fill=BOTH, expand=True)
         scrollbar.pack(side=RIGHT, fill=Y)
 
-        # 点击切换勾选
-        self.waypoint_tree.bind("<ButtonRelease-1>", self._on_waypoint_click)
-
-        # 填充航点数据
-        self._load_waypoints()
+        # 点击切换勾选（将在Task 6中重新实现）
+        # self.waypoint_tree.bind("<ButtonRelease-1>", self._on_waypoint_click)
 
         # ===== 底部按钮 =====
         btn_frame = ttk.Frame(main_frame)
@@ -140,37 +139,6 @@ class ExcelExportDialog(tk.Toplevel):
         self.status_label = ttk.Label(btn_frame, text="", foreground="gray")
         self.status_label.pack(side=LEFT, padx=15)
 
-    def _load_waypoints(self):
-        """加载航点到列表"""
-        for i, wp in enumerate(self.waypoints):
-            var = tk.BooleanVar(value=True)
-            self.waypoint_checks.append((var, wp))
-            check_text = "✓"
-            self.waypoint_tree.insert("", tk.END, iid=str(i), values=(
-                check_text,
-                i + 1,
-                wp.name or "",
-                f"{wp.latitude:.6f}",
-                f"{wp.longitude:.6f}"
-            ))
-
-    def _on_waypoint_click(self, event):
-        """点击航点行切换勾选状态"""
-        region = self.waypoint_tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-        item = self.waypoint_tree.identify_row(event.y)
-        if not item:
-            return
-        idx = int(item)
-        var, _ = self.waypoint_checks[idx]
-        var.set(not var.get())
-        check_text = "✓" if var.get() else ""
-        values = list(self.waypoint_tree.item(item, "values"))
-        values[0] = check_text
-        self.waypoint_tree.item(item, values=values)
-        self._update_export_state()
-
     def _select_all_fields(self):
         """全选属性"""
         for var in self.field_vars.values():
@@ -183,73 +151,16 @@ class ExcelExportDialog(tk.Toplevel):
             var.set(False)
         self._update_export_state()
 
-    def _select_all_waypoints(self):
-        """全选航点"""
-        for i, (var, wp) in enumerate(self.waypoint_checks):
-            var.set(True)
-            values = list(self.waypoint_tree.item(str(i), "values"))
-            values[0] = "✓"
-            self.waypoint_tree.item(str(i), values=values)
-        self._update_export_state()
-
-    def _deselect_all_waypoints(self):
-        """取消全选航点"""
-        for i, (var, wp) in enumerate(self.waypoint_checks):
-            var.set(False)
-            values = list(self.waypoint_tree.item(str(i), "values"))
-            values[0] = ""
-            self.waypoint_tree.item(str(i), values=values)
-        self._update_export_state()
-
     def _update_export_state(self):
         """更新导出按钮状态"""
-        has_fields = any(v.get() for v in self.field_vars.values())
-        has_waypoints = any(v.get() for v, _ in self.waypoint_checks)
-        if has_fields and has_waypoints:
-            self.export_btn.config(state=NORMAL)
-            selected_count = sum(1 for v, _ in self.waypoint_checks if v.get())
-            self.status_label.config(text=f"已选 {selected_count} 条航点")
-        else:
-            self.export_btn.config(state=DISABLED)
-            if not has_fields:
-                self.status_label.config(text="请至少选择一个属性")
-            else:
-                self.status_label.config(text="请至少选择一条航点")
+        # 临时占位，将在Task 6中重新实现
+        self.export_btn.config(state=DISABLED)
+        self.status_label.config(text="请添加GPX文件")
 
     def _do_export(self):
         """执行导出"""
-        selected_fields = [f for f, v in self.field_vars.items() if v.get()]
-        selected_waypoints = [wp for var, wp in self.waypoint_checks if var.get()]
-
-        if not selected_fields:
-            messagebox.showwarning("提示", "请至少选择一个导出属性")
-            return
-        if not selected_waypoints:
-            messagebox.showwarning("提示", "请至少选择一条航点")
-            return
-
-        # 选择保存路径
-        filepath = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel文件", "*.xlsx"), ("所有文件", "*.*")],
-            title="保存Excel文件"
-        )
-        if not filepath:
-            return
-
-        try:
-            ExcelExporter.export(selected_waypoints, selected_fields, filepath)
-            result = messagebox.askyesno(
-                "导出成功",
-                f"导出成功！共 {len(selected_waypoints)} 条航点\n\n是否打开文件所在目录？"
-            )
-            if result:
-                self._open_file_directory(filepath)
-            self.destroy()
-        except PermissionError:
-            messagebox.showerror("错误", "文件被占用或无写入权限，请关闭已打开的Excel文件后重试")
-        except Exception as e:
-            messagebox.showerror("错误", f"导出失败:\n{e}")
+        # 临时占位，将在Task 6中重新实现
+        messagebox.showinfo("提示", "功能开发中")
 
     def _open_file_directory(self, filepath):
         """打开文件所在目录"""
