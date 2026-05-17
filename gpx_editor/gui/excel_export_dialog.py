@@ -269,9 +269,11 @@ class ExcelExportDialog(tk.Toplevel):
         right_frame = ttk.LabelFrame(top_frame, text="选择航点", padding=10)
         right_frame.pack(side=RIGHT, fill=BOTH, expand=True, padx=(5, 0))
 
-        # 全选按钮
+        # 添加文件和全选按钮
         wp_btn_row = ttk.Frame(right_frame)
         wp_btn_row.pack(fill=X, pady=(0, 5))
+        ttk.Button(wp_btn_row, text="添加文件", command=self._add_files, bootstyle=INFO).pack(side=LEFT, padx=2)
+        ttk.Button(wp_btn_row, text="添加文件夹", command=self._add_folder, bootstyle=INFO).pack(side=LEFT, padx=2)
         ttk.Button(wp_btn_row, text="全选", command=self._select_all_waypoints, bootstyle=INFO).pack(side=LEFT, padx=2)
         ttk.Button(wp_btn_row, text="取消全选", command=self._deselect_all_waypoints, bootstyle=INFO).pack(side=LEFT, padx=2)
 
