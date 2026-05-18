@@ -10,7 +10,7 @@ import ttkbootstrap as ttkb
 from ttkbootstrap.constants import *
 import json
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 
 # 列定义
@@ -54,15 +54,43 @@ class ColumnConfigManager:
             try:
                 with open(self._config_file, "r", encoding="utf-8") as f:
                     config = json.load(f)
-                # 验证配置结构完整性
-                default = self._get_default_config()
-                for key in default:
-                    if key not in config:
-                        config[key] = default[key]
-                return config
+                return self._validate_config(config)
             except (json.JSONDecodeError, IOError):
-                return self._get_default_config()
+                pass
         return self._get_default_config()
+
+    def _validate_config(self, config: dict) -> dict:
+        """验证并修正配置"""
+        valid_ids = {col["id"] for col in COLUMN_DEFINITIONS}
+
+        # 验证visible_columns
+        visible = config.get("visible_columns", [])
+        if not isinstance(visible, list):
+            visible = DEFAULT_VISIBLE[:]
+        else:
+            visible = [v for v in visible if isinstance(v, str) and v in valid_ids]
+        if not visible:
+            visible = DEFAULT_VISIBLE[:]
+
+        # 验证column_order
+        order = config.get("column_order", [])
+        if not isinstance(order, list):
+            order = DEFAULT_ORDER[:]
+        else:
+            order = [o for o in order if isinstance(o, str) and o in valid_ids]
+        if not order:
+            order = DEFAULT_ORDER[:]
+
+        # 验证column_widths
+        widths = config.get("column_widths", {})
+        if not isinstance(widths, dict):
+            widths = {}
+
+        return {
+            "visible_columns": visible,
+            "column_order": order,
+            "column_widths": widths,
+        }
 
     def _get_default_config(self) -> dict:
         """获取默认配置"""
@@ -75,9 +103,13 @@ class ColumnConfigManager:
 
     def save(self):
         """保存配置到文件"""
-        os.makedirs(self._config_dir, exist_ok=True)
-        with open(self._config_file, "w", encoding="utf-8") as f:
-            json.dump(self._config, f, ensure_ascii=False, indent=2)
+        try:
+            os.makedirs(self._config_dir, exist_ok=True)
+            with open(self._config_file, "w", encoding="utf-8") as f:
+                json.dump(self._config, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception:
+            return False
 
     def reset_to_default(self):
         """重置为默认配置"""
@@ -375,7 +407,9 @@ class ColumnConfigDialog:
         # 将临时配置写回config_manager
         self._config_manager.visible_columns = self._temp_visible
         self._config_manager.column_order = self._temp_order
-        self._config_manager.save()
+        if not self._config_manager.save():
+            messagebox.showwarning("提示", "保存配置失败，请检查文件权限", parent=self._dialog)
+            return
 
         self.result = True
         self._dialog.destroy()
