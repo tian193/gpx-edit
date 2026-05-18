@@ -4,13 +4,15 @@
 功能: 应用程序主窗口界面
 """
 
+import os
+import json
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import ttkbootstrap as ttkb
 from ttkbootstrap.constants import *
 
 from ..core.gpx_handler import GpxHandler
-from ..core.coord_converter import CoordConverter
+from ..core.coord_converter import CoordConverter, TiandituTileProvider
 from tkintermapview import TkinterMapView
 from .undo_manager import UndoManager
 from .excel_export_dialog import ExcelExportDialog
@@ -36,6 +38,8 @@ class MainWindow(ttkb.Window):
         self._clipboard = None  # {'type': 'waypoint'|'track', 'data': {...}}
         self._satellite_overlay = False
         self._current_zone = None
+        self._tianditu_key = None
+        self._current_map_layer = "road"
 
         self._setup_ui()
         self._create_menu()
@@ -90,6 +94,8 @@ class MainWindow(ttkb.Window):
         view_menu.add_command(label="卫星图层", command=self._toggle_satellite)
         view_menu.add_separator()
         view_menu.add_command(label="列配置", command=self._open_column_config)
+        view_menu.add_separator()
+        view_menu.add_command(label="设置天地图Key", command=self._settings_tianditu_key)
 
         # 导出菜单
         export_menu = tk.Menu(menubar, tearoff=0)
@@ -159,15 +165,10 @@ class MainWindow(ttkb.Window):
         right_frame = ttk.LabelFrame(paned, text="地图视图", padding=5)
         paned.add(right_frame, weight=2)
 
-        # 地图组件 - 高德地图
+        # 地图组件 - 天地图
         self.map_widget = TkinterMapView(right_frame, corner_radius=0)
         self.map_widget.pack(fill=BOTH, expand=True)
-        self.map_widget.set_tile_server(
-            "https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
-            max_zoom=18
-        )
-        self.map_widget.set_position(39.9, 74.3)
-        self.map_widget.set_zoom(10)
+        self._init_tianditu_map()
 
         # 地图标记引用
         self._map_markers = []
@@ -401,16 +402,116 @@ class MainWindow(ttkb.Window):
 
     def _toggle_satellite(self):
         """切换卫星图层"""
-        if self._satellite_overlay:
-            self.map_widget.set_overlay_tile_server(None)
-            self._satellite_overlay = False
-            self.status_label.config(text="已关闭卫星图层")
-        else:
-            self.map_widget.set_overlay_tile_server(
-                "https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}"
-            )
-            self._satellite_overlay = True
+        if not self._tianditu_key:
+            messagebox.showinfo("提示", "请先配置天地图API Key")
+            return
+
+        if self._current_map_layer == "road":
+            img_url = TiandituTileProvider.get_satellite_url(self._tianditu_key)
+            cia_url = TiandituTileProvider.get_annotation_url(self._tianditu_key)
+            self.map_widget.set_tile_server(img_url, max_zoom=18)
+            self.map_widget.set_overlay_tile_server(cia_url)
+            self._current_map_layer = "satellite"
             self.status_label.config(text="已开启卫星图层")
+        else:
+            road_url = TiandituTileProvider.get_road_url(self._tianditu_key)
+            self.map_widget.set_tile_server(road_url, max_zoom=18)
+            self.map_widget.set_overlay_tile_server(None)
+            self._current_map_layer = "road"
+            self.status_label.config(text="已关闭卫星图层")
+
+    # ========== 天地图配置 ==========
+
+    def _load_config(self):
+        """加载配置"""
+        config_dir = os.path.expanduser("~/.gpx_editor")
+        config_file = os.path.join(config_dir, "config.json")
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_config(self, config):
+        """保存配置"""
+        config_dir = os.path.expanduser("~/.gpx_editor")
+        os.makedirs(config_dir, exist_ok=True)
+        config_file = os.path.join(config_dir, "config.json")
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+
+    def _get_tianditu_key(self):
+        """获取天地图API Key"""
+        config = self._load_config()
+        return config.get("tianditu_api_key", "")
+
+    def _set_tianditu_key(self, key):
+        """设置天地图API Key"""
+        config = self._load_config()
+        config["tianditu_api_key"] = key
+        self._save_config(config)
+
+    def _init_tianditu_map(self):
+        """初始化天地图"""
+        api_key = self._get_tianditu_key()
+        if not api_key:
+            api_key = self._prompt_api_key()
+            if not api_key:
+                self._init_default_map()
+                return
+
+        self._tianditu_key = api_key
+        self._current_map_layer = "road"
+
+        road_url = TiandituTileProvider.get_road_url(api_key)
+        self.map_widget.set_tile_server(road_url, max_zoom=18)
+
+        self.map_widget.set_position(39.9, 74.3)
+        self.map_widget.set_zoom(10)
+
+    def _init_default_map(self):
+        """初始化默认地图（高德）"""
+        self._tianditu_key = None
+        self._current_map_layer = "road"
+        self.map_widget.set_tile_server(
+            "https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
+            max_zoom=18
+        )
+        self.map_widget.set_position(39.9, 74.3)
+        self.map_widget.set_zoom(10)
+
+    def _prompt_api_key(self):
+        """提示输入天地图API Key"""
+        from tkinter import simpledialog
+        key = simpledialog.askstring(
+            "天地图API Key",
+            "请输入天地图API Key（免费申请：https://console.tianditu.gov.cn/）",
+            parent=self
+        )
+        if key:
+            self._set_tianditu_key(key.strip())
+        return key
+
+    def _settings_tianditu_key(self):
+        """设置天地图API Key"""
+        from tkinter import simpledialog
+        current_key = self._get_tianditu_key()
+        key = simpledialog.askstring(
+            "天地图API Key",
+            "请输入天地图API Key（免费申请：https://console.tianditu.gov.cn/）",
+            initialvalue=current_key,
+            parent=self
+        )
+        if key:
+            self._set_tianditu_key(key.strip())
+            self._tianditu_key = key.strip()
+            road_url = TiandituTileProvider.get_road_url(key.strip())
+            self.map_widget.set_tile_server(road_url, max_zoom=18)
+            self.map_widget.set_overlay_tile_server(None)
+            self._current_map_layer = "road"
+            self.status_label.config(text="已更新天地图API Key")
 
     def _open_column_config(self):
         """打开列配置对话框"""
