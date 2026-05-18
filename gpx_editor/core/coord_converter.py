@@ -22,16 +22,21 @@ class CoordConverter:
         return zone_number * 6 - 3
 
     @staticmethod
+    def _get_proj_string(zone: int) -> str:
+        """获取投影参数字符串"""
+        central_meridian = CoordConverter.get_central_meridian(zone)
+        return (
+            f"+proj=tmerc +lat_0=0 +lon_0={central_meridian} +k=1 "
+            f"+x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs"
+        )
+
+    @staticmethod
     def wgs84_to_cgcs2000(latitude: float, longitude: float) -> Tuple[float, float, int]:
         """WGS84经纬度转CGCS2000投影坐标"""
         try:
             from pyproj import Transformer
             zone = CoordConverter.get_zone_number(longitude)
-            central_meridian = CoordConverter.get_central_meridian(zone)
-            proj_string = (
-                f"+proj=tmerc +lat_0=0 +lon_0={central_meridian} +k=1 +x_0=500000 +y_0=0 "
-                f"+ellps=GRS80 +units=m +no_defs"
-            )
+            proj_string = CoordConverter._get_proj_string(zone)
             transformer = Transformer.from_crs("EPSG:4326", proj_string, always_xy=True)
             x, y = transformer.transform(longitude, latitude)
             return x, y, zone
@@ -43,11 +48,7 @@ class CoordConverter:
         """CGCS2000投影坐标转WGS84经纬度"""
         try:
             from pyproj import Transformer
-            central_meridian = CoordConverter.get_central_meridian(zone)
-            proj_string = (
-                f"+proj=tmerc +lat_0=0 +lon_0={central_meridian} +k=1 +x_0=500000 +y_0=0 "
-                f"+ellps=GRS80 +units=m +no_defs"
-            )
+            proj_string = CoordConverter._get_proj_string(zone)
             transformer = Transformer.from_crs(proj_string, "EPSG:4326", always_xy=True)
             lon, lat = transformer.transform(x, y)
             return lat, lon

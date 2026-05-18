@@ -4,7 +4,7 @@
 """
 
 import pytest
-from gpx_editor.core.coord_converter import CoordConverter
+from gpx_editor.core.coord_converter import CoordConverter, TiandituTileProvider
 
 
 class TestCoordConverter:
@@ -45,3 +45,29 @@ class TestCoordConverter:
         assert "20带" in result
         assert "X=" in result
         assert "Y=" in result
+
+
+class TestTiandituTileProvider:
+    """天地图瓦片提供器测试"""
+
+    def test_get_tile_url_vec(self):
+        """测试路网图URL"""
+        url = TiandituTileProvider.get_tile_url("vec", "testkey")
+        assert "testkey" in url
+        assert "vec" in url
+        assert "{s}" in url  # 子域名占位符保留
+        assert "{x}" in url  # 瓦片坐标占位符保留
+
+    def test_get_tile_url_invalid(self):
+        """测试无效图层类型"""
+        with pytest.raises(ValueError):
+            TiandituTileProvider.get_tile_url("invalid", "testkey")
+
+    def test_convenience_methods(self):
+        """测试便捷方法"""
+        road = TiandituTileProvider.get_road_url("key1")
+        sat = TiandituTileProvider.get_satellite_url("key2")
+        ann = TiandituTileProvider.get_annotation_url("key3")
+        assert "key1" in road
+        assert "key2" in sat
+        assert "key3" in ann
