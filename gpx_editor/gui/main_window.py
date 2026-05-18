@@ -45,6 +45,11 @@ class MainWindow(ttkb.Window):
         self._dragging_marker = None      # 当前拖拽的marker
         self._drag_data = {}              # {'start_pos': (lat, lon), 'canvas_start': (x, y), 'index': int, 'threshold_met': False}
 
+        # 航迹点交互状态
+        self._track_point_markers = []    # 航迹点marker列表: [(marker, trk_index, seg_index, pt_index), ...]
+        self._dragging_track_marker = None
+        self._track_drag_data = {}
+
         self._setup_ui()
         self._create_menu()
         self._create_main_layout()
@@ -180,6 +185,9 @@ class MainWindow(ttkb.Window):
 
         # 地图鼠标悬停显示坐标
         self.map_widget.canvas.bind("<Motion>", self._on_map_mouse_move)
+
+        # 地图双击插入航迹点
+        self.map_widget.canvas.bind("<Double-1>", self._on_map_double_click)
 
         # 地图右键菜单 - 在此添加航点
         self.map_widget.add_right_click_menu_command(
@@ -556,8 +564,11 @@ class MainWindow(ttkb.Window):
             marker.delete()
         for path in self._map_paths:
             path.delete()
+        for item in self._track_point_markers:
+            item[0].delete()
         self._map_markers.clear()
         self._map_paths.clear()
+        self._track_point_markers.clear()
 
         if not self.gpx_handler.gpx:
             return
@@ -571,15 +582,24 @@ class MainWindow(ttkb.Window):
                 # 绑定拖拽事件到marker的canvas元素
                 self._bind_marker_drag(marker, i)
 
-        # 添加航迹路径
-        for i, track in enumerate(self.gpx_handler.get_tracks()):
-            for segment in track.segments:
-                if len(segment.points) >= 2:
-                    coords = [(p.latitude, p.longitude) for p in segment.points
-                              if p.latitude is not None and p.longitude is not None]
-                    if len(coords) >= 2:
-                        path = self.map_widget.set_path(coords)
-                        self._map_paths.append(path)
+        # 添加航迹路径和航迹点标记
+        for ti, track in enumerate(self.gpx_handler.get_tracks()):
+            for si, segment in enumerate(track.segments):
+                valid_points = [(pi, p) for pi, p in enumerate(segment.points)
+                                if p.latitude is not None and p.longitude is not None]
+                if len(valid_points) >= 2:
+                    coords = [(p.latitude, p.longitude) for _, p in valid_points]
+                    path = self.map_widget.set_path(coords, color="green", width=2)
+                    self._map_paths.append(path)
+                # 为每个航迹点创建小绿色标记
+                for pi, point in valid_points:
+                    marker = self.map_widget.set_marker(
+                        point.latitude, point.longitude, text="",
+                        marker_color_circle="green",
+                        marker_color_outside="white"
+                    )
+                    self._track_point_markers.append((marker, ti, si, pi))
+                    self._bind_track_point_drag(marker, ti, si, pi)
 
         self._zoom_to_fit()
 
@@ -698,6 +718,225 @@ class MainWindow(ttkb.Window):
         """点击marker - 在树形列表中选中对应航点"""
         self.tree.selection_set(f"wpt_{index}")
         self.tree.see(f"wpt_{index}")
+
+    # ========== 航迹点拖拽 ==========
+
+    def _bind_track_point_drag(self, marker, trk_index, seg_index, pt_index):
+        """为航迹点marker绑定拖拽和右键删除事件"""
+        items = []
+        for attr in ('polygon', 'big_circle', 'canvas_text', 'canvas_icon', 'canvas_image'):
+            item = getattr(marker, attr, None)
+            if item:
+                items.append(item)
+
+        for item in items:
+            self.map_widget.canvas.tag_bind(
+                item, '<ButtonPress-1>',
+                lambda e, m=marker, ti=trk_index, si=seg_index, pi=pt_index:
+                    self._on_track_point_press(m, ti, si, pi, e))
+            self.map_widget.canvas.tag_bind(
+                item, '<B1-Motion>',
+                lambda e, m=marker, ti=trk_index, si=seg_index, pi=pt_index:
+                    self._on_track_point_motion(m, ti, si, pi, e))
+            self.map_widget.canvas.tag_bind(
+                item, '<ButtonRelease-1>',
+                lambda e, m=marker, ti=trk_index, si=seg_index, pi=pt_index:
+                    self._on_track_point_release(m, ti, si, pi, e))
+            self.map_widget.canvas.tag_bind(
+                item, '<Button-3>',
+                lambda e, ti=trk_index, si=seg_index, pi=pt_index:
+                    self._on_track_point_right_click(e, ti, si, pi))
+
+    def _on_track_point_press(self, marker, trk_index, seg_index, pt_index, event):
+        """航迹点鼠标按下 - 记录拖拽起始位置"""
+        self._dragging_track_marker = marker
+        self._track_drag_data = {
+            'start_pos': marker.position,
+            'canvas_start': (event.x, event.y),
+            'trk_index': trk_index,
+            'seg_index': seg_index,
+            'pt_index': pt_index,
+            'threshold_met': False
+        }
+
+    def _on_track_point_motion(self, marker, trk_index, seg_index, pt_index, event):
+        """航迹点鼠标移动 - 超过阈值后拖拽"""
+        if self._dragging_track_marker != marker or not self._track_drag_data:
+            return
+
+        sx, sy = self._track_drag_data['canvas_start']
+        dx = event.x - sx
+        dy = event.y - sy
+        if dx * dx + dy * dy > 25:
+            self._track_drag_data['threshold_met'] = True
+
+        if self._track_drag_data['threshold_met']:
+            try:
+                lat, lon = self.map_widget.convert_canvas_coords_to_decimal_coords(event.x, event.y)
+                marker.set_position(lat, lon)
+            except Exception:
+                pass
+
+    def _on_track_point_release(self, marker, trk_index, seg_index, pt_index, event):
+        """航迹点鼠标释放 - 完成拖拽"""
+        if self._dragging_track_marker != marker:
+            self._dragging_track_marker = None
+            self._track_drag_data = {}
+            return
+
+        if self._track_drag_data.get('threshold_met'):
+            new_lat, new_lon = marker.position
+            tracks = self.gpx_handler.get_tracks()
+            if 0 <= trk_index < len(tracks):
+                track = tracks[trk_index]
+                if 0 <= seg_index < len(track.segments):
+                    segment = track.segments[seg_index]
+                    if 0 <= pt_index < len(segment.points):
+                        point = segment.points[pt_index]
+                        old_lat, old_lon = point.latitude, point.longitude
+                        point.latitude = new_lat
+                        point.longitude = new_lon
+                        self.undo_manager.push({
+                            'type': 'move_track_point',
+                            'data': {
+                                'trk_index': trk_index,
+                                'seg_index': seg_index,
+                                'pt_index': pt_index,
+                                'lat': new_lat, 'lon': new_lon
+                            },
+                            'reverse_data': {
+                                'trk_index': trk_index,
+                                'seg_index': seg_index,
+                                'pt_index': pt_index,
+                                'lat': old_lat, 'lon': old_lon
+                            }
+                        })
+                        self._update_map()
+                        self._mark_modified()
+                        self.status_label.config(
+                            text=f"已移动航迹点 ({new_lat:.6f}, {new_lon:.6f})")
+
+        self._dragging_track_marker = None
+        self._track_drag_data = {}
+
+    def _on_track_point_right_click(self, event, trk_index, seg_index, pt_index):
+        """航迹点右键 - 显示删除菜单"""
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(
+            label="删除航迹点",
+            command=lambda: self._delete_track_point(trk_index, seg_index, pt_index))
+        menu.post(event.x_root, event.y_root)
+
+    def _delete_track_point(self, trk_index, seg_index, pt_index):
+        """删除指定航迹点"""
+        tracks = self.gpx_handler.get_tracks()
+        if 0 <= trk_index < len(tracks):
+            track = tracks[trk_index]
+            if 0 <= seg_index < len(track.segments):
+                segment = track.segments[seg_index]
+                if 0 <= pt_index < len(segment.points):
+                    point = segment.points[pt_index]
+                    old_lat, old_lon = point.latitude, point.longitude
+                    segment.points.pop(pt_index)
+                    self.undo_manager.push({
+                        'type': 'delete_track_point',
+                        'data': {
+                            'trk_index': trk_index,
+                            'seg_index': seg_index,
+                            'pt_index': pt_index,
+                            'lat': old_lat, 'lon': old_lon
+                        },
+                        'reverse_data': {
+                            'trk_index': trk_index,
+                            'seg_index': seg_index,
+                            'pt_index': pt_index,
+                            'lat': old_lat, 'lon': old_lon
+                        }
+                    })
+                    self._update_map()
+                    self._mark_modified()
+                    self.status_label.config(
+                        text=f"已删除航迹点 ({old_lat:.6f}, {old_lon:.6f})")
+
+    # ========== 地图双击插入航迹点 ==========
+
+    def _on_map_double_click(self, event):
+        """地图双击 - 在最近的航迹边上插入航迹点"""
+        try:
+            lat, lon = self.map_widget.convert_canvas_coords_to_decimal_coords(event.x, event.y)
+        except Exception:
+            return
+
+        tracks = self.gpx_handler.get_tracks()
+        if not tracks:
+            return
+
+        # 查找距离点击位置最近的航迹边
+        best_dist = float('inf')
+        best_trk = -1
+        best_seg = -1
+        best_insert_idx = -1
+
+        for ti, track in enumerate(tracks):
+            for si, segment in enumerate(track.segments):
+                pts = segment.points
+                for i in range(len(pts) - 1):
+                    p1 = pts[i]
+                    p2 = pts[i + 1]
+                    if (p1.latitude is None or p1.longitude is None or
+                            p2.latitude is None or p2.longitude is None):
+                        continue
+                    # 计算点到线段的近似距离（用中点距离近似）
+                    dist = self._point_to_segment_dist(
+                        lat, lon, p1.latitude, p1.longitude, p2.latitude, p2.longitude)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_trk = ti
+                        best_seg = si
+                        best_insert_idx = i + 1
+
+        if best_trk < 0:
+            return
+
+        # 插入新航迹点
+        import gpxpy.gpx
+        segment = tracks[best_trk].segments[best_seg]
+        new_point = gpxpy.gpx.GPXTrackPoint(latitude=lat, longitude=lon)
+        segment.points.insert(best_insert_idx, new_point)
+
+        self.undo_manager.push({
+            'type': 'insert_track_point',
+            'data': {
+                'trk_index': best_trk,
+                'seg_index': best_seg,
+                'pt_index': best_insert_idx,
+                'lat': lat, 'lon': lon
+            },
+            'reverse_data': {
+                'trk_index': best_trk,
+                'seg_index': best_seg,
+                'pt_index': best_insert_idx,
+                'lat': lat, 'lon': lon
+            }
+        })
+
+        self._update_map()
+        self._mark_modified()
+        self.status_label.config(
+            text=f"已插入航迹点 ({lat:.6f}, {lon:.6f})")
+
+    def _point_to_segment_dist(self, px, py, ax, ay, bx, by):
+        """计算点(px,py)到线段(ax,ay)-(bx,by)的近似距离（欧氏距离度量）"""
+        import math
+        dx = bx - ax
+        dy = by - ay
+        len_sq = dx * dx + dy * dy
+        if len_sq == 0:
+            return math.sqrt((px - ax) ** 2 + (py - ay) ** 2)
+        t = max(0, min(1, ((px - ax) * dx + (py - ay) * dy) / len_sq))
+        proj_x = ax + t * dx
+        proj_y = ay + t * dy
+        return math.sqrt((px - proj_x) ** 2 + (py - proj_y) ** 2)
 
     # ========== 右键菜单 ==========
 
@@ -1093,7 +1332,37 @@ class MainWindow(ttkb.Window):
             wpt.latitude = data['lat']
             wpt.longitude = data['lon']
 
+        elif cmd_type == 'move_track_point':
+            track = self.gpx_handler.get_tracks()[cmd['data']['trk_index']]
+            point = track.segments[cmd['data']['seg_index']].points[cmd['data']['pt_index']]
+            data = cmd['data'] if is_redo else cmd['reverse_data']
+            point.latitude = data['lat']
+            point.longitude = data['lon']
+
+        elif cmd_type == 'insert_track_point':
+            import gpxpy.gpx
+            track = self.gpx_handler.get_tracks()[cmd['data']['trk_index']]
+            segment = track.segments[cmd['data']['seg_index']]
+            if is_redo:
+                new_point = gpxpy.gpx.GPXTrackPoint(
+                    latitude=cmd['data']['lat'], longitude=cmd['data']['lon'])
+                segment.points.insert(cmd['data']['pt_index'], new_point)
+            else:
+                segment.points.pop(cmd['data']['pt_index'])
+
+        elif cmd_type == 'delete_track_point':
+            import gpxpy.gpx
+            track = self.gpx_handler.get_tracks()[cmd['data']['trk_index']]
+            segment = track.segments[cmd['data']['seg_index']]
+            if is_redo:
+                segment.points.pop(cmd['data']['pt_index'])
+            else:
+                new_point = gpxpy.gpx.GPXTrackPoint(
+                    latitude=cmd['data']['lat'], longitude=cmd['data']['lon'])
+                segment.points.insert(cmd['data']['pt_index'], new_point)
+
         self._populate_tree()
+        self._update_map()
         self._mark_modified()
 
     # ========== 状态标记 ==========
