@@ -41,6 +41,10 @@ class MainWindow(ttkb.Window):
         self._tianditu_key = None
         self._current_map_layer = "road"
 
+        # 拖拽状态
+        self._dragging_marker = None      # 当前拖拽的marker
+        self._drag_data = {}              # {'start_pos': (lat, lon), 'canvas_start': (x, y), 'index': int, 'threshold_met': False}
+
         self._setup_ui()
         self._create_menu()
         self._create_main_layout()
@@ -558,12 +562,14 @@ class MainWindow(ttkb.Window):
         if not self.gpx_handler.gpx:
             return
 
-        # 添加航点标记
+        # 添加航点标记（不设command，由拖拽逻辑处理点击）
         for i, wpt in enumerate(self.gpx_handler.get_waypoints()):
             if wpt.latitude is not None and wpt.longitude is not None:
                 name = wpt.name or f"航点{i+1}"
                 marker = self.map_widget.set_marker(wpt.latitude, wpt.longitude, text=name)
                 self._map_markers.append(marker)
+                # 绑定拖拽事件到marker的canvas元素
+                self._bind_marker_drag(marker, i)
 
         # 添加航迹路径
         for i, track in enumerate(self.gpx_handler.get_tracks()):
@@ -605,6 +611,93 @@ class MainWindow(ttkb.Window):
                 else:
                     zoom = 12
                 self.map_widget.set_zoom(zoom)
+
+    # ========== 航点拖拽 ==========
+
+    def _bind_marker_drag(self, marker, index):
+        """为marker的canvas元素绑定拖拽事件"""
+        # 获取marker的canvas元素（tkintermapview 1.29的属性）
+        items = []
+        for attr in ('polygon', 'big_circle', 'canvas_text', 'canvas_icon', 'canvas_image'):
+            item = getattr(marker, attr, None)
+            if item:
+                items.append(item)
+
+        for item in items:
+            self.map_widget.canvas.tag_bind(item, '<ButtonPress-1>',
+                                            lambda e, m=marker, idx=index: self._on_marker_press(m, idx, e))
+            self.map_widget.canvas.tag_bind(item, '<B1-Motion>',
+                                            lambda e, m=marker, idx=index: self._on_marker_motion(m, idx, e))
+            self.map_widget.canvas.tag_bind(item, '<ButtonRelease-1>',
+                                            lambda e, m=marker, idx=index: self._on_marker_release(m, idx, e))
+
+    def _on_marker_press(self, marker, index, event):
+        """鼠标按下 - 记录拖拽起始位置"""
+        self._dragging_marker = marker
+        self._drag_data = {
+            'start_pos': marker.position,
+            'canvas_start': (event.x, event.y),
+            'index': index,
+            'threshold_met': False
+        }
+
+    def _on_marker_motion(self, marker, index, event):
+        """鼠标移动 - 超过阈值后拖拽marker"""
+        if self._dragging_marker != marker or not self._drag_data:
+            return
+
+        # 检查是否超过拖拽阈值
+        sx, sy = self._drag_data['canvas_start']
+        dx = event.x - sx
+        dy = event.y - sy
+        if dx * dx + dy * dy > 25:  # 5px阈值
+            self._drag_data['threshold_met'] = True
+
+        if self._drag_data['threshold_met']:
+            # 转换canvas坐标为经纬度
+            try:
+                lat, lon = self.map_widget.convert_canvas_coords_to_decimal_coords(event.x, event.y)
+                marker.set_position(lat, lon)
+            except Exception:
+                pass
+
+    def _on_marker_release(self, marker, index, event):
+        """鼠标释放 - 完成拖拽或处理点击"""
+        if self._dragging_marker != marker:
+            self._dragging_marker = None
+            self._drag_data = {}
+            return
+
+        if self._drag_data.get('threshold_met'):
+            # 拖拽完成，更新GPX数据
+            new_lat, new_lon = marker.position
+            waypoints = self.gpx_handler.get_waypoints()
+            if 0 <= index < len(waypoints):
+                wpt = waypoints[index]
+                old_lat, old_lon = wpt.latitude, wpt.longitude
+                wpt.latitude = new_lat
+                wpt.longitude = new_lon
+                self.undo_manager.push({
+                    'type': 'move_waypoint',
+                    'data': {'index': index, 'lat': new_lat, 'lon': new_lon},
+                    'reverse_data': {'index': index, 'lat': old_lat, 'lon': old_lon}
+                })
+                self._populate_tree()
+                self._mark_modified()
+                self.status_label.config(
+                    text=f"已移动航点: {wpt.name or f'航点{index+1}'} "
+                         f"({new_lat:.6f}, {new_lon:.6f})")
+        else:
+            # 未超过阈值，视为点击 - 选中对应航点
+            self._on_marker_click(index)
+
+        self._dragging_marker = None
+        self._drag_data = {}
+
+    def _on_marker_click(self, index):
+        """点击marker - 在树形列表中选中对应航点"""
+        self.tree.selection_set(f"wpt_{index}")
+        self.tree.see(f"wpt_{index}")
 
     # ========== 右键菜单 ==========
 
@@ -993,6 +1086,12 @@ class MainWindow(ttkb.Window):
             wpt.longitude = data['lon']
             wpt.elevation = data.get('ele')
             wpt.description = data.get('desc')
+
+        elif cmd_type == 'move_waypoint':
+            wpt = self.gpx_handler.get_waypoints()[cmd['data']['index']]
+            data = cmd['data'] if is_redo else cmd['reverse_data']
+            wpt.latitude = data['lat']
+            wpt.longitude = data['lon']
 
         self._populate_tree()
         self._mark_modified()
