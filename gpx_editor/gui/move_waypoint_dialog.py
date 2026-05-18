@@ -30,7 +30,7 @@ class MoveWaypointDialog:
         self._temp_marker = None
 
         self.dialog = tk.Toplevel(parent)
-        self.dialog.title("GPX编辑器 - 移动航点")
+        self.dialog.title(f"移动航点 — {waypoint.name or '未命名'}")
         self.dialog.transient(parent)
         self.dialog.grab_set()
         self.dialog.resizable(False, False)
@@ -330,12 +330,18 @@ class MoveWaypointDialog:
 
             try:
                 x = float(self.cgcs_x_var.get())
+                if x < 0:
+                    messagebox.showwarning("提示", "X 坐标必须为正数", parent=self.dialog)
+                    return
             except ValueError:
                 messagebox.showwarning("提示", "X 坐标格式不正确", parent=self.dialog)
                 return
 
             try:
                 y = float(self.cgcs_y_var.get())
+                if y < 0:
+                    messagebox.showwarning("提示", "Y 坐标必须为正数", parent=self.dialog)
+                    return
             except ValueError:
                 messagebox.showwarning("提示", "Y 坐标格式不正确", parent=self.dialog)
                 return
