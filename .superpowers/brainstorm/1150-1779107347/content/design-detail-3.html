@@ -1,0 +1,136 @@
+<h2>功能三详细设计：地图交互编辑</h2>
+<p class="subtitle">MapSource风格的地图编辑体验 + 天地图集成</p>
+
+<div class="section">
+  <h3>地图交互能力总览</h3>
+  <div class="mockup">
+    <div class="mockup-header">地图编辑交互</div>
+    <div class="mockup-body" style="padding: 15px;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+        <!-- 航点操作 -->
+        <div style="border: 1px solid #ccc; border-radius: 6px; padding: 12px;">
+          <div style="font-weight: bold; margin-bottom: 8px; color: #007bff;">航点操作</div>
+          <div style="font-size: 12px; line-height: 1.8;">
+            <div>🖱️ <strong>拖拽移动</strong>：按住航点marker拖拽到新位置</div>
+            <div>📍 <strong>右键菜单</strong>：删除、属性、复制坐标</div>
+            <div>🔗 <strong>列表联动</strong>：点击航点marker，列表自动选中</div>
+          </div>
+        </div>
+        <!-- 航迹点操作 -->
+        <div style="border: 1px solid #ccc; border-radius: 6px; padding: 12px;">
+          <div style="font-weight: bold; margin-bottom: 8px; color: #28a745;">航迹点操作</div>
+          <div style="font-size: 12px; line-height: 1.8;">
+            <div>🖱️ <strong>拖拽移动</strong>：按住航迹点拖拽调整位置</div>
+            <div>👆 <strong>双击插入</strong>：双击航迹线插入新航迹点</div>
+            <div>🗑️ <strong>右键删除</strong>：右键航迹点删除该点</div>
+            <div>🔗 <strong>列表联动</strong>：点击航迹点，列表自动选中</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>地图布局与图层</h3>
+  <div class="mockup">
+    <div class="mockup-header">地图视图布局</div>
+    <div class="mockup-body" style="padding: 15px;">
+      <div style="border: 1px solid #ccc; border-radius: 8px; overflow: hidden;">
+        <!-- 地图工具栏 -->
+        <div style="background: #f8f9fa; padding: 8px 12px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; gap: 8px;">
+            <button style="padding: 4px 12px; border: 1px solid #007bff; border-radius: 4px; background: #007bff; color: white; font-size: 12px;">路网图</button>
+            <button style="padding: 4px 12px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5; font-size: 12px;">卫星影像</button>
+            <button style="padding: 4px 12px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5; font-size: 12px;">混合图层</button>
+          </div>
+          <div style="font-size: 11px; color: #666;">
+            坐标: 39.123456, 116.654321 | 缩放: 12
+          </div>
+        </div>
+        <!-- 地图区域 -->
+        <div style="height: 300px; background: #e8f4e8; position: relative; display: flex; align-items: center; justify-content: center;">
+          <div style="text-align: center; color: #666;">
+            <div style="font-size: 48px; margin-bottom: 10px;">🗺️</div>
+            <div>天地图瓦片加载区域</div>
+            <div style="font-size: 12px; margin-top: 5px;">支持路网图 / 卫星影像 / 混合图层切换</div>
+          </div>
+          <!-- 模拟航点marker -->
+          <div style="position: absolute; top: 80px; left: 120px; width: 12px; height: 12px; background: #dc3545; border: 2px solid white; border-radius: 50%; cursor: grab; box-shadow: 0 2px 4px rgba(0,0,0,0.3);" title="WPT001 - 可拖拽"></div>
+          <div style="position: absolute; top: 150px; left: 200px; width: 12px; height: 12px; background: #dc3545; border: 2px solid white; border-radius: 50%; cursor: grab; box-shadow: 0 2px 4px rgba(0,0,0,0.3);" title="WPT002 - 可拖拽"></div>
+          <!-- 模拟航迹线 -->
+          <svg style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;">
+            <polyline points="120,80 180,120 200,150 280,180 350,160" fill="none" stroke="#28a745" stroke-width="2" stroke-dasharray="5,5"/>
+          </svg>
+          <!-- 模拟航迹点 -->
+          <div style="position: absolute; top: 76px; left: 116px; width: 8px; height: 8px; background: #28a745; border: 2px solid white; border-radius: 50%; cursor: pointer;" title="航迹点1"></div>
+          <div style="position: absolute; top: 116px; left: 176px; width: 8px; height: 8px; background: #28a745; border: 2px solid white; border-radius: 50%; cursor: pointer;" title="航迹点2 - 双击插入新点"></div>
+          <div style="position: absolute; top: 146px; left: 196px; width: 8px; height: 8px; background: #28a745; border: 2px solid white; border-radius: 50%; cursor: pointer;" title="航迹点3"></div>
+          <div style="position: absolute; top: 176px; left: 276px; width: 8px; height: 8px; background: #28a745; border: 2px solid white; border-radius: 50%; cursor: pointer;" title="航迹点4"></div>
+          <div style="position: absolute; top: 156px; left: 346px; width: 8px; height: 8px; background: #28a745; border: 2px solid white; border-radius: 50%; cursor: pointer;" title="航迹点5"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>天地图集成方案</h3>
+  <div class="cards">
+    <div class="card">
+      <div class="card-body">
+        <h3>瓦片服务配置</h3>
+        <ul>
+          <li><strong>路网图</strong>：http://t{s}.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk={API_KEY}</li>
+          <li><strong>卫星影像</strong>：http://t{s}.tianditu.gov.cn/img_w/wmts?...（同上，LAYER=img）</li>
+          <li><strong>路网标注</strong>：http://t{s}.tianditu.gov.cn/cia_w/wmts?...（同上，LAYER=cia，叠加在卫星图上）</li>
+          <li>子域名：t0-t7，随机选择</li>
+          <li>坐标系：EPSG:4326（WGS84）</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>交互实现细节</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>航点交互</h4>
+      <ul>
+        <li>tkintermapview的marker支持command回调</li>
+        <li>拖拽：绑定marker的移动事件，实时更新坐标</li>
+        <li>右键：绑定右键菜单，提供删除/属性选项</li>
+        <li>选中联动：marker点击时通知树形列表选中对应项</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>航迹点交互</h4>
+      <ul>
+        <li>航迹点用小号marker显示（半径4px）</li>
+        <li>航迹线用path绘制，绑定双击事件插入新点</li>
+        <li>右键菜单：删除该航迹点，自动重绘航迹线</li>
+        <li>选中联动：航迹点点击时通知树形列表选中对应航迹</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>撤销/重做支持</h3>
+  <div class="mockup">
+    <div class="mockup-header">操作历史</div>
+    <div class="mockup-body" style="padding: 15px; font-size: 13px;">
+      <div style="background: #f8f9fa; padding: 12px; border-radius: 6px;">
+        <div>所有地图编辑操作都支持撤销/重做：</div>
+        <div style="margin-left: 15px; margin-top: 5px;">
+          <div>• 拖拽航点 → 记录旧坐标和新坐标</div>
+          <div>• 拖拽航迹点 → 记录旧坐标和新坐标</div>
+          <div>• 插入航迹点 → 记录插入位置和点数据</div>
+          <div>• 删除航迹点 → 记录删除位置和点数据</div>
+        </div>
+        <div style="margin-top: 10px;">快捷键：Ctrl+Z 撤销，Ctrl+Y 重做</div>
+      </div>
+    </div>
+  </div>
+</div>

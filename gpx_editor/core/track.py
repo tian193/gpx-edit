@@ -6,7 +6,7 @@
 
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
-from math import radians, sin, cos, sqrt, atan2
+from ..utils.helpers import haversine_distance
 
 
 @dataclass
@@ -33,15 +33,10 @@ class TrackData:
 class TrackManager:
     """航迹管理器"""
 
-    R = 6371000  # 地球半径(米)
-
     @classmethod
     def haversine(cls, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         """计算两点间距离(米)"""
-        dlat = radians(lat2 - lat1)
-        dlon = radians(lon2 - lon1)
-        a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
-        return cls.R * 2 * atan2(sqrt(a), sqrt(1-a))
+        return haversine_distance(lat1, lon1, lat2, lon2)
 
     @classmethod
     def calculate_distance(cls, points: List[TrackPoint]) -> float:
@@ -181,3 +176,85 @@ class TrackManager:
         if index < 0 or index >= len(points):
             return points, []
         return points[:index+1], points[index:]
+
+    # === gpxpy对象直接操作方法 ===
+
+    @staticmethod
+    def simplify_gpx_track(track, epsilon: float):
+        """简化gpxpy GPXTrack对象
+        对每个段分别运行Douglas-Peucker算法
+        """
+        import gpxpy.gpx
+        for segment in track.segments:
+            if len(segment.points) <= 2:
+                continue
+            simplified = TrackManager.simplify_douglas_peucker(segment.points, epsilon)
+            segment.points.clear()
+            segment.points.extend(simplified)
+
+    @staticmethod
+    def merge_gpx_tracks(tracks, name: str = "合并航迹"):
+        """合并多条gpxpy GPXTrack为一条
+        返回新的GPXTrack对象
+        """
+        import gpxpy.gpx
+        merged = gpxpy.gpx.GPXTrack()
+        merged.name = name
+        for track in tracks:
+            for segment in track.segments:
+                new_seg = gpxpy.gpx.GPXTrackSegment()
+                new_seg.points.extend(segment.points)
+                merged.segments.append(new_seg)
+        return merged
+
+    @staticmethod
+    def split_gpx_track(track, segment_index: int, point_index: int):
+        """在指定位置分割gpxpy GPXTrack
+        返回两个新的GPXTrack对象
+        """
+        import gpxpy.gpx
+        if segment_index < 0 or segment_index >= len(track.segments):
+            return track, None
+
+        seg = track.segments[segment_index]
+        if point_index < 0 or point_index >= len(seg.points):
+            return track, None
+
+        # 前半部分
+        track1 = gpxpy.gpx.GPXTrack()
+        track1.name = (track.name or "航迹") + " (前段)"
+        for i in range(segment_index):
+            new_seg = gpxpy.gpx.GPXTrackSegment()
+            new_seg.points.extend(track.segments[i].points)
+            track1.segments.append(new_seg)
+        # 当前段的前半部分
+        seg1 = gpxpy.gpx.GPXTrackSegment()
+        seg1.points.extend(seg.points[:point_index + 1])
+        track1.segments.append(seg1)
+
+        # 后半部分
+        track2 = gpxpy.gpx.GPXTrack()
+        track2.name = (track.name or "航迹") + " (后段)"
+        # 当前段的后半部分
+        seg2 = gpxpy.gpx.GPXTrackSegment()
+        seg2.points.extend(seg.points[point_index:])
+        track2.segments.append(seg2)
+        for i in range(segment_index + 1, len(track.segments)):
+            new_seg = gpxpy.gpx.GPXTrackSegment()
+            new_seg.points.extend(track.segments[i].points)
+            track2.segments.append(new_seg)
+
+        return track1, track2
+
+    @staticmethod
+    def get_track_total_distance(track) -> float:
+        """计算gpxpy GPXTrack的总距离(米)"""
+        total = 0.0
+        for segment in track.segments:
+            total += TrackManager.calculate_distance(segment.points)
+        return total
+
+    @staticmethod
+    def get_track_point_count(track) -> int:
+        """获取gpxpy GPXTrack的总点数"""
+        return sum(len(seg.points) for seg in track.segments)

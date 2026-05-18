@@ -1,0 +1,157 @@
+<h2>功能一详细设计：数据列表列配置</h2>
+<p class="subtitle">确认这部分设计后再进入下一个功能</p>
+
+<div class="section">
+  <h3>整体架构</h3>
+  <div class="mockup">
+    <div class="mockup-header">数据列表布局</div>
+    <div class="mockup-body" style="padding: 10px;">
+      <div style="display: flex; gap: 10px;">
+        <!-- 左侧：数据列表 -->
+        <div style="flex: 1; border: 1px solid #ccc; border-radius: 6px; overflow: hidden;">
+          <div style="background: #f0f0f0; padding: 8px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: bold;">数据列表</span>
+            <span style="color: #666; font-size: 12px; cursor: pointer; border: 1px solid #ccc; padding: 2px 8px; border-radius: 4px;">⚙ 列配置</span>
+          </div>
+          <div style="background: #e8e8e8; padding: 6px 8px; border-bottom: 1px solid #ccc; font-size: 12px; font-weight: bold;">
+            <span style="display: inline-block; width: 30px;"> </span>
+            <span style="display: inline-block; width: 60px;">类型</span>
+            <span style="display: inline-block; width: 100px;">名称</span>
+            <span style="display: inline-block; width: 90px;">纬度</span>
+            <span style="display: inline-block; width: 90px;">经度</span>
+            <span style="display: inline-block; width: 80px;">海拔</span>
+            <span style="display: inline-block; width: 140px;">时间</span>
+            <span style="display: inline-block; width: 100px;">CGCS2000 X</span>
+            <span style="display: inline-block; width: 100px;">CGCS2000 Y</span>
+          </div>
+          <div style="padding: 4px 8px; font-size: 12px; border-bottom: 1px solid #eee;">
+            <span style="display: inline-block; width: 30px;">▶</span>
+            <span style="display: inline-block; width: 60px;">航点</span>
+            <span style="display: inline-block; width: 100px;">WPT001</span>
+            <span style="display: inline-block; width: 90px;">39.123456</span>
+            <span style="display: inline-block; width: 90px;">116.654321</span>
+            <span style="display: inline-block; width: 80px;">45.2</span>
+            <span style="display: inline-block; width: 140px;">2024-01-15 10:30</span>
+            <span style="display: inline-block; width: 100px;">444012.345</span>
+            <span style="display: inline-block; width: 100px;">4330567.890</span>
+          </div>
+          <div style="padding: 4px 8px; font-size: 12px; border-bottom: 1px solid #eee;">
+            <span style="display: inline-block; width: 30px;">▶</span>
+            <span style="display: inline-block; width: 60px;">航点</span>
+            <span style="display: inline-block; width: 100px;">WPT002</span>
+            <span style="display: inline-block; width: 90px;">39.234567</span>
+            <span style="display: inline-block; width: 90px;">116.765432</span>
+            <span style="display: inline-block; width: 80px;">52.1</span>
+            <span style="display: inline-block; width: 140px;">2024-01-15 10:45</span>
+            <span style="display: inline-block; width: 100px;">451234.567</span>
+            <span style="display: inline-block; width: 100px;">4331789.012</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>列配置对话框</h3>
+  <div class="mockup">
+    <div class="mockup-header">列配置对话框</div>
+    <div class="mockup-body" style="padding: 15px;">
+      <div style="display: flex; gap: 15px;">
+        <!-- 左侧：可用列 -->
+        <div style="flex: 1; border: 1px solid #ccc; border-radius: 6px; padding: 10px;">
+          <div style="font-weight: bold; margin-bottom: 8px;">可用列</div>
+          <div style="font-size: 11px; color: #666; margin-bottom: 8px;">点击添加到显示列表</div>
+          <div style="border: 1px solid #eee; border-radius: 4px; padding: 4px;">
+            <div style="padding: 4px 8px; cursor: pointer; background: #f5f5f5; margin-bottom: 2px;">☐ 符号 (sym)</div>
+            <div style="padding: 4px 8px; cursor: pointer; background: #f5f5f5; margin-bottom: 2px;">☐ 来源 (source)</div>
+            <div style="padding: 4px 8px; cursor: pointer; background: #f5f5f5; margin-bottom: 2px;">☐ 备注 (comment)</div>
+            <div style="padding: 4px 8px; cursor: pointer; background: #fff3cd; margin-bottom: 2px;">☐ CGCS2000 X (计算)</div>
+            <div style="padding: 4px 8px; cursor: pointer; background: #fff3cd; margin-bottom: 2px;">☐ CGCS2000 Y (计算)</div>
+            <div style="padding: 4px 8px; cursor: pointer; background: #fff3cd; margin-bottom: 2px;">☐ 距离 (计算)</div>
+          </div>
+        </div>
+        <!-- 右侧：已显示列 -->
+        <div style="flex: 1; border: 1px solid #ccc; border-radius: 6px; padding: 10px;">
+          <div style="font-weight: bold; margin-bottom: 8px;">已显示列 <span style="font-size: 11px; color: #666;">拖动调整顺序</span></div>
+          <div style="border: 1px solid #eee; border-radius: 4px; padding: 4px;">
+            <div style="padding: 4px 8px; cursor: grab; background: #d4edda; margin-bottom: 2px; display: flex; justify-content: space-between;">
+              <span>☑ 类型</span>
+              <span style="color: #999;">☰</span>
+            </div>
+            <div style="padding: 4px 8px; cursor: grab; background: #d4edda; margin-bottom: 2px; display: flex; justify-content: space-between;">
+              <span>☑ 名称</span>
+              <span style="color: #999;">☰</span>
+            </div>
+            <div style="padding: 4px 8px; cursor: grab; background: #d4edda; margin-bottom: 2px; display: flex; justify-content: space-between;">
+              <span>☑ 纬度</span>
+              <span style="color: #999;">☰</span>
+            </div>
+            <div style="padding: 4px 8px; cursor: grab; background: #d4edda; margin-bottom: 2px; display: flex; justify-content: space-between;">
+              <span>☑ 经度</span>
+              <span style="color: #999;">☰</span>
+            </div>
+            <div style="padding: 4px 8px; cursor: grab; background: #d4edda; margin-bottom: 2px; display: flex; justify-content: space-between;">
+              <span>☑ 海拔</span>
+              <span style="color: #999;">☰</span>
+            </div>
+            <div style="padding: 4px 8px; cursor: grab; background: #d4edda; margin-bottom: 2px; display: flex; justify-content: space-between;">
+              <span>☑ 时间</span>
+              <span style="color: #999;">☰</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top: 10px; display: flex; justify-content: flex-end; gap: 8px;">
+        <button style="padding: 6px 16px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5;">重置默认</button>
+        <button style="padding: 6px 16px; border: 1px solid #007bff; border-radius: 4px; background: #007bff; color: white;">确定</button>
+        <button style="padding: 6px 16px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5;">取消</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>CGCS2000投影坐标计算</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>实现方式</h4>
+      <ul>
+        <li>使用proj库或纯Python实现WGS84→CGCS2000转换</li>
+        <li>6度带，中央经线 = 带号 × 6 - 3</li>
+        <li>带号 = floor(第一个航点经度 / 6) + 1</li>
+        <li>计算列在数据加载时批量计算，缓存结果</li>
+        <li>列头显示带号信息，如"CGCS2000 X (39带)"</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>依赖</h4>
+      <ul>
+        <li>需要安装pyproj库（推荐）或自行实现坐标转换</li>
+        <li>pyproj基于PROJ库，精度高，支持多种投影</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>配置持久化</h3>
+  <div class="mockup">
+    <div class="mockup-header">配置文件格式 (column_config.json)</div>
+    <div class="mockup-body" style="padding: 10px; font-family: monospace; font-size: 12px;">
+      <pre>{
+  "visible_columns": ["type", "name", "lat", "lon", "ele", "time"],
+  "column_order": ["type", "name", "lat", "lon", "ele", "time", "desc", "cmt", "sym", "source", "cgcs2000_x", "cgcs2000_y"],
+  "column_widths": {
+    "type": 60,
+    "name": 120,
+    "lat": 100,
+    "lon": 100,
+    "ele": 80,
+    "time": 140
+  },
+  "cgcs2000_zone": null
+}</pre>
+    </div>
+  </div>
+</div>

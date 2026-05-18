@@ -6,6 +6,7 @@
 
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
+from ..utils.helpers import haversine_distance
 
 
 @dataclass
@@ -43,18 +44,9 @@ class WaypointManager:
     def sort_by_distance(waypoints: List[WaypointData],
                          center: Tuple[float, float]) -> List[WaypointData]:
         """按距离中心点排序"""
-        from math import radians, sin, cos, sqrt, atan2
-
-        def haversine(lat1, lon1, lat2, lon2):
-            R = 6371000  # 地球半径(米)
-            dlat = radians(lat2 - lat1)
-            dlon = radians(lon2 - lon1)
-            a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
-            return R * 2 * atan2(sqrt(a), sqrt(1-a))
-
         center_lat, center_lon = center
         return sorted(waypoints,
-                      key=lambda w: haversine(w.latitude, w.longitude, center_lat, center_lon))
+                      key=lambda w: haversine_distance(w.latitude, w.longitude, center_lat, center_lon))
 
     @staticmethod
     def filter_by_bounds(waypoints: List[WaypointData],
@@ -68,10 +60,4 @@ class WaypointManager:
     @staticmethod
     def calculate_distance(wp1: WaypointData, wp2: WaypointData) -> float:
         """计算两点间距离(米)"""
-        from math import radians, sin, cos, sqrt, atan2
-
-        R = 6371000
-        dlat = radians(wp2.latitude - wp1.latitude)
-        dlon = radians(wp2.longitude - wp1.longitude)
-        a = sin(dlat/2)**2 + cos(radians(wp1.latitude)) * cos(radians(wp2.latitude)) * sin(dlon/2)**2
-        return R * 2 * atan2(sqrt(a), sqrt(1-a))
+        return haversine_distance(wp1.latitude, wp1.longitude, wp2.latitude, wp2.longitude)

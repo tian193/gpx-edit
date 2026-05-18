@@ -35,6 +35,7 @@ class MainWindow(ttkb.Window):
         self.column_config = ColumnConfigManager()
         self._clipboard = None  # {'type': 'waypoint'|'track', 'data': {...}}
         self._satellite_overlay = False
+        self._current_zone = None
 
         self._setup_ui()
         self._create_menu()
@@ -151,11 +152,6 @@ class MainWindow(ttkb.Window):
         self._tree_scrollbar = scrollbar
         self._rebuild_tree_columns()
 
-        # 绑定事件
-        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
-        self.tree.bind("<Double-1>", self._on_tree_double_click)
-        self.tree.bind("<Button-3>", self._on_tree_right_click)
-
         # 右键菜单
         self._create_context_menu()
 
@@ -266,8 +262,7 @@ class MainWindow(ttkb.Window):
 
     def _populate_tree(self):
         """填充树形列表"""
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        self.tree.delete(*self.tree.get_children())
 
         if not self.gpx_handler.gpx:
             return

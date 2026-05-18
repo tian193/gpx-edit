@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm search *)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "Bash(npm info *)",
+      "Bash(claude mcp *)",
+      "Bash(ls -la *.gdb)",
+      "Bash(ls -la test_check.gdb)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python -c ' *)",
+      "Bash(gh api *)",
+      "Bash(gh search *)",
+      "Bash(curl -sL \"https://api.github.com/repos/GPSBabel/gpsbabel/contents?ref=master\")",
+      "Bash(python -c \"import json,sys; items=json.load\\(sys.stdin\\); [print\\(i['name']\\) for i in items if isinstance\\(i, dict\\) and 'name' in i]\")",
+      "Bash(python -c \"import json,sys; items=json.load\\(sys.stdin\\); [print\\(i['name']\\) for i in items if isinstance\\(i, dict\\) and 'name' in i and 'gdb' in i['name'].lower\\(\\)]\")",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/GPSBabel/gpsbabel/master/gdb.cc\")",
+      "WebFetch(domain:www.memotech.franken.de)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/GPSBabel/gpsbabel/master/garmin_tables.cc\")",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/GPSBabel/gpsbabel/master/garmin_icon_tables.h\")",
+      "Bash(python -c \"from gpx_editor.gui.main_window import MainWindow; print\\('import ok'\\)\")",
+      "Bash(python -c \"import tkintermapview; print\\(f'Version: {tkintermapview.__version__}'\\)\")",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(pip show *)",
+      "Bash(pip3 show *)",
+      "Skill(superpowers:writing-plans)",
+      "Skill(superpowers:subagent-driven-development)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git commit *)",
+      "Bash(git reset *)",
+      "Bash(bash *)",
+      "Bash(curl -s http://localhost:58133)",
+      "Bash(sort -t- -k2 -n)",
+      "Bash(curl -s http://localhost:59308)"
+    ]
+  }
+}

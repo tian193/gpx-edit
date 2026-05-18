@@ -111,7 +111,7 @@ class GpxEditor:
         ele = GpxEditor._extract_tag(block, 'ele')
         if ele:
             try:
-                wp.elevation = float(ele)
+                wp.ele = float(ele)
             except ValueError:
                 pass
 
@@ -135,7 +135,7 @@ class GpxEditor:
         )
 
         # 统计航段和航迹点数量
-        trk.seg_count = len(re.findall(r'<trkseg>', block))
+        trk.segment_count = len(re.findall(r'<trkseg>', block))
         trk.point_count = len(re.findall(r'<trkpt', block))
 
         return trk

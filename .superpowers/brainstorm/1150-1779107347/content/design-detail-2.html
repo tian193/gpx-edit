@@ -1,0 +1,152 @@
+<h2>功能二详细设计：移动航点（三种模式）</h2>
+<p class="subtitle">标签页切换三种移动方式，内置CGCS2000坐标转换</p>
+
+<div class="section">
+  <h3>对话框整体布局</h3>
+  <div class="mockup">
+    <div class="mockup-header">移动航点对话框</div>
+    <div class="mockup-body" style="padding: 15px;">
+      <div style="border: 1px solid #ccc; border-radius: 8px; overflow: hidden; width: 420px;">
+        <!-- 标题栏 -->
+        <div style="background: #f8f9fa; padding: 10px 15px; border-bottom: 1px solid #ccc; font-weight: bold;">
+          移动航点 — WPT001
+        </div>
+        <!-- 当前位置 -->
+        <div style="padding: 10px 15px; background: #e8f4fd; border-bottom: 1px solid #ccc; font-size: 12px;">
+          <div><strong>当前位置（WGS84）：</strong>39.123456, 116.654321</div>
+          <div><strong>当前位置（CGCS2000）：</strong>X=444012.345, Y=4330567.890 (39带)</div>
+        </div>
+        <!-- 标签页 -->
+        <div style="display: flex; border-bottom: 1px solid #ccc;">
+          <div style="padding: 8px 16px; background: #007bff; color: white; font-size: 13px; cursor: pointer;">手动输入</div>
+          <div style="padding: 8px 16px; background: #f8f9fa; font-size: 13px; cursor: pointer; border-left: 1px solid #ccc;">地图选点</div>
+          <div style="padding: 8px 16px; background: #f8f9fa; font-size: 13px; cursor: pointer; border-left: 1px solid #ccc;">精细移动</div>
+        </div>
+        <!-- 标签页内容：手动输入 -->
+        <div style="padding: 15px;">
+          <div style="font-size: 12px; color: #666; margin-bottom: 10px;">支持输入经纬度或CGCS2000投影坐标，自动识别格式</div>
+          <!-- 输入模式选择 -->
+          <div style="margin-bottom: 12px;">
+            <label style="margin-right: 15px; font-size: 13px;">
+              <input type="radio" name="coord_type" checked> 经纬度（WGS84）
+            </label>
+            <label style="font-size: 13px;">
+              <input type="radio" name="coord_type"> 投影坐标（CGCS2000）
+            </label>
+          </div>
+          <!-- 经纬度输入 -->
+          <div style="display: grid; grid-template-columns: 60px 1fr; gap: 8px; align-items: center; font-size: 13px;">
+            <span>纬度：</span>
+            <input type="text" value="39.123456" style="padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
+            <span>经度：</span>
+            <input type="text" value="116.654321" style="padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
+          </div>
+          <!-- 投影坐标输入（隐藏状态） -->
+          <div style="display: none; margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 4px; font-size: 12px;">
+            <div style="margin-bottom: 8px;"><strong>CGCS2000 投影坐标（39带）</strong></div>
+            <div style="display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center;">
+              <span>X（东向）：</span>
+              <input type="text" placeholder="444012.345">
+              <span>Y（北向）：</span>
+              <input type="text" placeholder="4330567.890">
+            </div>
+          </div>
+        </div>
+        <!-- 按钮 -->
+        <div style="padding: 10px 15px; border-top: 1px solid #ccc; display: flex; justify-content: flex-end; gap: 8px;">
+          <button style="padding: 6px 20px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5;">取消</button>
+          <button style="padding: 6px 20px; border: 1px solid #007bff; border-radius: 4px; background: #007bff; color: white;">确定移动</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>标签页2：地图选点</h3>
+  <div class="mockup">
+    <div class="mockup-header">地图选点模式</div>
+    <div class="mockup-body" style="padding: 15px;">
+      <div style="border: 1px solid #ccc; border-radius: 8px; overflow: hidden; width: 420px;">
+        <div style="padding: 15px; text-align: center;">
+          <div style="font-size: 14px; margin-bottom: 10px;">点击"确定"后，在地图上点击新位置</div>
+          <div style="padding: 20px; background: #e8f4fd; border-radius: 6px; font-size: 12px; color: #666;">
+            <div>📍 当前位置已标记为 <span style="color: #dc3545;">红色</span></div>
+            <div>🖱️ 点击地图选择新位置</div>
+            <div>按 ESC 取消</div>
+          </div>
+        </div>
+        <div style="padding: 10px 15px; border-top: 1px solid #ccc; display: flex; justify-content: flex-end; gap: 8px;">
+          <button style="padding: 6px 20px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5;">取消</button>
+          <button style="padding: 6px 20px; border: 1px solid #007bff; border-radius: 4px; background: #007bff; color: white;">确定选点</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>标签页3：精细移动</h3>
+  <div class="mockup">
+    <div class="mockup-header">精细移动模式</div>
+    <div class="mockup-body" style="padding: 15px;">
+      <div style="border: 1px solid #ccc; border-radius: 8px; overflow: hidden; width: 420px;">
+        <div style="padding: 15px;">
+          <div style="font-size: 12px; color: #666; margin-bottom: 12px;">输入偏移量（单位：米），正值向东/北，负值向西/南</div>
+          <div style="display: grid; grid-template-columns: 100px 1fr 60px; gap: 8px; align-items: center; font-size: 13px;">
+            <span>X偏移（东西）：</span>
+            <input type="text" value="0" style="padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px;">
+            <span style="color: #666;">米</span>
+            <span>Y偏移（南北）：</span>
+            <input type="text" value="0" style="padding: 5px 8px; border: 1px solid #ccc; border-radius: 4px;">
+            <span style="color: #666;">米</span>
+          </div>
+          <!-- 预览 -->
+          <div style="margin-top: 12px; padding: 10px; background: #d4edda; border-radius: 4px; font-size: 12px;">
+            <div><strong>预览新位置：</strong></div>
+            <div>WGS84: 39.123456, 116.654321</div>
+            <div>CGCS2000: X=444012.345, Y=4330567.890</div>
+          </div>
+          <!-- 快捷按钮 -->
+          <div style="margin-top: 10px; display: flex; gap: 5px; flex-wrap: wrap;">
+            <button style="padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5; font-size: 11px;">北+10m</button>
+            <button style="padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5; font-size: 11px;">南-10m</button>
+            <button style="padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5; font-size: 11px;">东+10m</button>
+            <button style="padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5; font-size: 11px;">西-10m</button>
+            <button style="padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5; font-size: 11px;">北+1m</button>
+            <button style="padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5; font-size: 11px;">南-1m</button>
+            <button style="padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5; font-size: 11px;">东+1m</button>
+            <button style="padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5; font-size: 11px;">西-1m</button>
+          </div>
+        </div>
+        <div style="padding: 10px 15px; border-top: 1px solid #ccc; display: flex; justify-content: flex-end; gap: 8px;">
+          <button style="padding: 6px 20px; border: 1px solid #ccc; border-radius: 4px; background: #f5f5f5;">取消</button>
+          <button style="padding: 6px 20px; border: 1px solid #007bff; border-radius: 4px; background: #007bff; color: white;">确定移动</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>坐标转换流程</h3>
+  <div class="mockup">
+    <div class="mockup-header">输入识别逻辑</div>
+    <div class="mockup-body" style="padding: 15px; font-size: 13px;">
+      <div style="background: #f8f9fa; padding: 12px; border-radius: 6px;">
+        <div style="margin-bottom: 8px;"><strong>自动识别规则：</strong></div>
+        <div style="margin-left: 15px;">
+          <div>1. 用户在"经纬度"模式输入 → 直接作为WGS84坐标</div>
+          <div>2. 用户在"投影坐标"模式输入 → CGCS2000转WGS84</div>
+          <div>3. 精细移动 → 基于当前位置偏移，直接计算新WGS84坐标</div>
+        </div>
+        <div style="margin-top: 10px;"><strong>CGCS2000 ↔ WGS84 转换：</strong></div>
+        <div style="margin-left: 15px;">
+          <div>• CGCS2000与WGS84椭球参数几乎相同（差异&lt;0.1mm）</div>
+          <div>• 投影坐标 ↔ 经纬度使用标准高斯-克吕格反算公式</div>
+          <div>• 使用pyproj库确保精度</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

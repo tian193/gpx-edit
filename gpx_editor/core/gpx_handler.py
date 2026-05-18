@@ -27,11 +27,16 @@ class GpxHandler:
         return self.gpx
 
     def load(self, filepath: str) -> gpxpy.gpx.GPX:
-        """加载GPX文件"""
-        with open(filepath, 'r', encoding='utf-8') as f:
-            self.gpx = gpxpy.parse(f)
-        self.filepath = filepath
-        return self.gpx
+        """加载GPX文件，支持多种编码"""
+        for encoding in ['utf-8', 'gbk', 'latin-1']:
+            try:
+                with open(filepath, 'r', encoding=encoding) as f:
+                    self.gpx = gpxpy.parse(f)
+                self.filepath = filepath
+                return self.gpx
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        raise ValueError(f"无法解析文件: {filepath}")
 
     def save(self, filepath: Optional[str] = None):
         """保存GPX文件"""
@@ -111,9 +116,13 @@ class GpxHandler:
             self.gpx.tracks.pop(index)
 
     def get_track_points(self, track_index: int) -> List[gpxpy.gpx.GPXTrackPoint]:
-        """获取航迹点列表"""
+        """获取航迹所有点列表（跨所有段）"""
         if self.gpx and 0 <= track_index < len(self.gpx.tracks):
-            return self.gpx.tracks[track_index].points
+            track = self.gpx.tracks[track_index]
+            all_points = []
+            for segment in track.segments:
+                all_points.extend(segment.points)
+            return all_points
         return []
 
     def get_bounds(self) -> Optional[Tuple[float, float, float, float]]:
