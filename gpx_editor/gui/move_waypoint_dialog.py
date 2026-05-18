@@ -423,15 +423,15 @@ class MoveWaypointDialog:
         # 恢复光标
         self.map_widget.canvas.config(cursor="")
 
-        # 解绑点击事件
+        # 解绑点击事件（使用回调ID选择性解绑）
         if self._click_binding:
-            self.map_widget.canvas.unbind("<Button-1>")
+            self.map_widget.canvas.unbind("<Button-1>", self._click_binding)
             self._click_binding = None
 
-        # 解绑ESC
+        # 解绑ESC（使用回调ID选择性解绑）
         top_level = self.map_widget.winfo_toplevel()
         if self._esc_binding:
-            top_level.unbind("<Escape>")
+            top_level.unbind("<Escape>", self._esc_binding)
             self._esc_binding = None
 
         # 删除临时标记
