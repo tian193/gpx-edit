@@ -10,9 +10,11 @@ import ttkbootstrap as ttkb
 from ttkbootstrap.constants import *
 
 from ..core.gpx_handler import GpxHandler
+from ..core.coord_converter import CoordConverter
 from tkintermapview import TkinterMapView
 from .undo_manager import UndoManager
 from .excel_export_dialog import ExcelExportDialog
+from .column_config_dialog import ColumnConfigManager, ColumnConfigDialog, COLUMN_DEFINITIONS
 
 
 class MainWindow(ttkb.Window):
@@ -30,6 +32,7 @@ class MainWindow(ttkb.Window):
         self.gpx_handler = GpxHandler()
         self.is_modified = False
         self.undo_manager = UndoManager()
+        self.column_config = ColumnConfigManager()
         self._clipboard = None  # {'type': 'waypoint'|'track', 'data': {...}}
         self._satellite_overlay = False
 
@@ -84,6 +87,8 @@ class MainWindow(ttkb.Window):
         view_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="视图", menu=view_menu)
         view_menu.add_command(label="卫星图层", command=self._toggle_satellite)
+        view_menu.add_separator()
+        view_menu.add_command(label="列配置", command=self._open_column_config)
 
         # 导出菜单
         export_menu = tk.Menu(menubar, tearoff=0)
@@ -140,21 +145,11 @@ class MainWindow(ttkb.Window):
         scrollbar = ttk.Scrollbar(tree_frame, orient=VERTICAL)
         scrollbar.pack(side=RIGHT, fill=Y)
 
-        self.tree = ttk.Treeview(tree_frame, columns=("type", "name", "lat", "lon"),
-                                  show="tree headings", yscrollcommand=scrollbar.set)
-        scrollbar.config(command=self.tree.yview)
-
-        self.tree.heading("#0", text="")
-        self.tree.heading("type", text="类型")
-        self.tree.heading("name", text="名称")
-        self.tree.heading("lat", text="纬度")
-        self.tree.heading("lon", text="经度")
-        self.tree.column("#0", width=30, stretch=False)
-        self.tree.column("type", width=60)
-        self.tree.column("name", width=120)
-        self.tree.column("lat", width=100)
-        self.tree.column("lon", width=100)
-        self.tree.pack(fill=BOTH, expand=True)
+        # 初始化tree占位，后续由_rebuild_tree_columns重建
+        self.tree = None
+        self._tree_frame = tree_frame
+        self._tree_scrollbar = scrollbar
+        self._rebuild_tree_columns()
 
         # 绑定事件
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
@@ -215,40 +210,168 @@ class MainWindow(ttkb.Window):
 
     # ========== 树形列表 ==========
 
+    def _rebuild_tree_columns(self):
+        """重建树形列表列配置"""
+        visible_cols = self.column_config.get_ordered_visible_columns()
+        col_ids = [col["id"] for col in visible_cols]
+
+        # 保存旧的tree引用
+        old_tree = self.tree if hasattr(self, 'tree') and self.tree else None
+        tree_frame = getattr(self, '_tree_frame', None)
+
+        if tree_frame is None:
+            if old_tree:
+                tree_frame = old_tree.master
+            else:
+                return
+
+        # 获取滚动条
+        scrollbar = getattr(self, '_tree_scrollbar', None)
+        if scrollbar is None and old_tree:
+            for child in tree_frame.winfo_children():
+                if isinstance(child, ttk.Scrollbar):
+                    scrollbar = child
+                    break
+
+        if old_tree:
+            old_tree.destroy()
+
+        self.tree = ttk.Treeview(tree_frame, columns=col_ids,
+                                  show="tree headings")
+        if scrollbar:
+            scrollbar.config(command=self.tree.yview)
+            self.tree.configure(yscrollcommand=scrollbar.set)
+
+        # 设置列头
+        self.tree.heading("#0", text="")
+        self.tree.column("#0", width=30, stretch=False)
+
+        for col in visible_cols:
+            col_id = col["id"]
+            col_name = col["name"]
+            if col_id in ("cgcs2000_x", "cgcs2000_y") and hasattr(self, '_current_zone') and self._current_zone:
+                col_name = f"{col_name} ({self._current_zone}带)"
+            self.tree.heading(col_id, text=col_name)
+            width = self.column_config.get_column_width(col_id)
+            self.tree.column(col_id, width=width)
+
+        self.tree.pack(fill=BOTH, expand=True)
+        if scrollbar:
+            scrollbar.pack(side=RIGHT, fill=Y)
+
+        # 绑定事件
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self.tree.bind("<Double-1>", self._on_tree_double_click)
+        self.tree.bind("<Button-3>", self._on_tree_right_click)
+
     def _populate_tree(self):
-        """用GPX数据填充树形列表"""
-        self.tree.delete(*self.tree.get_children())
+        """填充树形列表"""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
 
         if not self.gpx_handler.gpx:
             return
 
-        # 航点分组
+        # 计算CGCS2000带号
+        self._current_zone = None
         waypoints = self.gpx_handler.get_waypoints()
-        if waypoints:
-            wpt_group = self.tree.insert("", "end", iid="group_waypoints",
-                                          text="航点", values=("航点", f"({len(waypoints)})", "", ""),
-                                          open=True)
-            for i, wpt in enumerate(waypoints):
-                name = wpt.name or f"航点{i+1}"
-                lat = f"{wpt.latitude:.6f}" if wpt.latitude is not None else ""
-                lon = f"{wpt.longitude:.6f}" if wpt.longitude is not None else ""
-                self.tree.insert(wpt_group, "end", iid=f"wpt_{i}",
-                                  text="", values=("", name, lat, lon))
+        if waypoints and waypoints[0].latitude is not None and waypoints[0].longitude is not None:
+            _, _, self._current_zone = CoordConverter.wgs84_to_cgcs2000(
+                waypoints[0].latitude, waypoints[0].longitude
+            )
+            self._update_column_headers()
 
-        # 航迹分组
+        visible_cols = self.column_config.get_ordered_visible_columns()
+
+        # 添加航点组
+        if waypoints:
+            wpt_group = self.tree.insert("", END, text=" ", values=self._get_group_values("航点", visible_cols), open=True)
+            for i, wpt in enumerate(waypoints):
+                values = self._get_waypoint_values(wpt, visible_cols)
+                self.tree.insert(wpt_group, END, iid=f"wpt_{i}", text=" ", values=values)
+
+        # 添加航迹组
         tracks = self.gpx_handler.get_tracks()
         if tracks:
-            trk_group = self.tree.insert("", "end", iid="group_tracks",
-                                          text="航迹", values=("航迹", f"({len(tracks)})", "", ""),
-                                          open=True)
-            for i, track in enumerate(tracks):
-                name = track.name or f"航迹{i+1}"
-                point_count = sum(len(seg.points) for seg in track.segments)
-                self.tree.insert(trk_group, "end", iid=f"trk_{i}",
-                                  text="", values=("", name, f"{point_count}点", ""))
+            trk_group = self.tree.insert("", END, text=" ", values=self._get_group_values("航迹", visible_cols), open=True)
+            for i, trk in enumerate(tracks):
+                values = self._get_track_values(trk, visible_cols)
+                self.tree.insert(trk_group, END, iid=f"trk_{i}", text=" ", values=values)
 
         self._update_status_counts()
         self._update_map()
+
+    def _get_group_values(self, group_name, visible_cols):
+        """获取分组行的值"""
+        values = []
+        for col in visible_cols:
+            if col["id"] == "name":
+                values.append(group_name)
+            else:
+                values.append("")
+        return tuple(values)
+
+    def _get_waypoint_values(self, wpt, visible_cols):
+        """获取航点在各列的值"""
+        values = []
+        for col in visible_cols:
+            col_id = col["id"]
+            if col_id == "type":
+                values.append("航点")
+            elif col_id == "name":
+                values.append(wpt.name or "")
+            elif col_id == "lat":
+                values.append(f"{wpt.latitude:.6f}" if wpt.latitude is not None else "")
+            elif col_id == "lon":
+                values.append(f"{wpt.longitude:.6f}" if wpt.longitude is not None else "")
+            elif col_id == "ele":
+                values.append(f"{wpt.elevation:.1f}" if wpt.elevation is not None else "")
+            elif col_id == "time":
+                values.append(str(wpt.time) if wpt.time else "")
+            elif col_id == "desc":
+                values.append(wpt.description or "")
+            elif col_id == "cmt":
+                values.append(wpt.comment or "")
+            elif col_id == "sym":
+                values.append(wpt.symbol or "")
+            elif col_id == "source":
+                values.append(wpt.source or "")
+            elif col_id in ("cgcs2000_x", "cgcs2000_y"):
+                if wpt.latitude is not None and wpt.longitude is not None:
+                    x, y, _ = CoordConverter.wgs84_to_cgcs2000(wpt.latitude, wpt.longitude)
+                    values.append(f"{x:.3f}" if col_id == "cgcs2000_x" else f"{y:.3f}")
+                else:
+                    values.append("")
+            else:
+                values.append("")
+        return tuple(values)
+
+    def _get_track_values(self, trk, visible_cols):
+        """获取航迹在各列的值"""
+        values = []
+        for col in visible_cols:
+            col_id = col["id"]
+            if col_id == "type":
+                values.append("航迹")
+            elif col_id == "name":
+                values.append(trk.name or "")
+            elif col_id == "desc":
+                values.append(trk.description or "")
+            elif col_id == "cmt":
+                values.append(trk.comment or "")
+            elif col_id == "source":
+                values.append(trk.source or "")
+            else:
+                values.append("")
+        return tuple(values)
+
+    def _update_column_headers(self):
+        """更新列头显示（带号信息）"""
+        if not hasattr(self, '_current_zone') or not self._current_zone:
+            return
+        for col in self.column_config.get_ordered_visible_columns():
+            if col["id"] in ("cgcs2000_x", "cgcs2000_y"):
+                self.tree.heading(col["id"], text=f"{col['name']} ({self._current_zone}带)")
 
     def _on_tree_select(self, event):
         """树形列表选择事件"""
@@ -293,6 +416,13 @@ class MainWindow(ttkb.Window):
             )
             self._satellite_overlay = True
             self.status_label.config(text="已开启卫星图层")
+
+    def _open_column_config(self):
+        """打开列配置对话框"""
+        dialog = ColumnConfigDialog(self, self.column_config)
+        if dialog.result:
+            self._rebuild_tree_columns()
+            self._populate_tree()
 
     def _on_map_mouse_move(self, event):
         """鼠标悬停显示坐标"""
