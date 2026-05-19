@@ -468,6 +468,7 @@ class MainWindow(ttkb.Window):
 
     def _set_map_tool(self, tool):
         """切换地图工具"""
+        self._clear_selection_graphics()
         self._map_tool = tool
         self._update_tool_buttons()
         if tool == "hand":
@@ -482,6 +483,16 @@ class MainWindow(ttkb.Window):
                 btn.state(["pressed"])
             else:
                 btn.state(["!pressed"])
+
+    def _clear_selection_graphics(self):
+        """清除框选临时图形"""
+        if self._selection_rect_id:
+            self.map_widget.canvas.delete(self._selection_rect_id)
+            self._selection_rect_id = None
+        if self._selection_lasso_id:
+            self.map_widget.canvas.delete(self._selection_lasso_id)
+            self._selection_lasso_id = None
+        self._selection_points.clear()
 
     def _toggle_satellite(self):
         """切换卫星图层"""
