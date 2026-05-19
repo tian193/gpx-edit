@@ -224,6 +224,10 @@ class MainWindow(ttkb.Window):
         self.map_widget.canvas.bind("<B1-Motion>", self._on_tool_drag, add=True)
         self.map_widget.canvas.bind("<ButtonRelease-1>", self._on_tool_release, add=True)
 
+        # 键盘快捷键
+        self.bind("<Escape>", lambda e: self._clear_all_selections())
+        self.bind("<Control-a>", lambda e: self._select_all_waypoints())
+
         # 地图右键菜单 - 在此添加航点
         self.map_widget.add_right_click_menu_command(
             "在此添加航点", self._add_waypoint_at_map_coords, pass_coords=True
@@ -438,6 +442,18 @@ class MainWindow(ttkb.Window):
     def _on_tree_select(self, event):
         """树形列表选择事件"""
         selected = self.tree.selection()
+
+        # 同步地图marker高亮
+        for idx in list(self._selected_waypoints):
+            self._unhighlight_marker(idx)
+        self._selected_waypoints.clear()
+
+        for item_id in selected:
+            if item_id.startswith("wpt_"):
+                idx = int(item_id.split("_")[1])
+                self._selected_waypoints.add(idx)
+                self._highlight_marker(idx)
+
         if not selected:
             return
         iid = selected[0]
@@ -450,6 +466,8 @@ class MainWindow(ttkb.Window):
             track = self.gpx_handler.get_tracks()[index]
             point_count = sum(len(seg.points) for seg in track.segments)
             self.status_label.config(text=f"选中航迹: {track.name} ({point_count}点)")
+
+        self._update_selection_status()
 
     def _on_tree_double_click(self, event):
         """树形列表双击事件"""
@@ -910,6 +928,16 @@ class MainWindow(ttkb.Window):
         self.tree.selection_set()
         self.status_label.config(text="就绪")
         self._clear_selection_graphics()
+
+    def _select_all_waypoints(self):
+        """全选所有航点"""
+        self._clear_all_selections()
+        waypoints = self.gpx_handler.get_waypoints()
+        for i in range(len(waypoints)):
+            self._selected_waypoints.add(i)
+            self._highlight_marker(i)
+            self.tree.selection_add(f"wpt_{i}")
+        self._update_selection_status()
 
     def _bind_marker_click(self, marker, index):
         """为marker绑定点击选中和右键菜单"""
