@@ -222,10 +222,8 @@ class MainWindow(ttkb.Window):
         self.map_widget.pack(fill=BOTH, expand=True)
         self._init_tianditu_map()
 
-        # 比例尺标签（右下角）
-        self._scale_label = ttk.Label(self.map_widget, text="缩放: 5", font=("", 9),
-                                       background="#FFFFFF", padding=(4, 2))
-        self._scale_label.place(relx=1.0, rely=1.0, anchor="se", x=-10, y=-10)
+        # 比例尺（右下角，canvas绘制）
+        self._scale_bar_items = []  # canvas元素ID
 
         # 地图标记引用
         self._map_markers = []
@@ -1154,30 +1152,68 @@ class MainWindow(ttkb.Window):
             self.map_widget.canvas.tag_raise("track_dot")
 
     def _update_scale_label(self):
-        """更新比例尺标签"""
-        zoom = self.map_widget.zoom
-        # 计算比例尺（每像素对应的地面距离）
-        # 在纬度0度处，zoom级别z时，1像素 ≈ 156543.03 * cos(0) / 2^z 米
+        """更新比例尺（线段+距离）"""
         import math
-        lat = self.map_widget.upper_left_tile_pos[1]  # 近似纬度
-        # 使用中心纬度
+        canvas = self.map_widget.canvas
+        # 删除旧的比例尺元素
+        for item_id in self._scale_bar_items:
+            canvas.delete(item_id)
+        self._scale_bar_items.clear()
+
+        zoom = self.map_widget.zoom
+        # 计算每像素对应的地面距离（米）
         center_tile_y = (self.map_widget.upper_left_tile_pos[1] + self.map_widget.lower_right_tile_pos[1]) / 2
-        # 将tile y转换为纬度
         n = 2 ** round(zoom)
         lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * center_tile_y / n)))
         lat_deg = math.degrees(lat_rad)
-        # 每像素对应的地面距离（米）
         meters_per_pixel = 156543.03 * math.cos(math.radians(lat_deg)) / (2 ** round(zoom))
-        # 选择合适的比例尺长度
-        if meters_per_pixel < 0.5:
-            scale_text = f"缩放: {round(zoom)} | {meters_per_pixel*100:.0f}cm/像素"
-        elif meters_per_pixel < 100:
-            scale_text = f"缩放: {round(zoom)} | {meters_per_pixel:.1f}m/像素"
-        elif meters_per_pixel < 1000:
-            scale_text = f"缩放: {round(zoom)} | {meters_per_pixel:.0f}m/像素"
+
+        # 选择合适的比例尺距离（目标线段长度约80-120像素）
+        target_pixels = 100
+        target_meters = meters_per_pixel * target_pixels
+        # 取整到"好看"的数值
+        nice_values = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000]
+        scale_meters = nice_values[0]
+        for v in nice_values:
+            if v >= target_meters:
+                scale_meters = v
+                break
+            scale_meters = v
+
+        # 计算线段像素长度
+        line_pixels = scale_meters / meters_per_pixel if meters_per_pixel > 0 else target_pixels
+
+        # 位置（右下角）
+        canvas_w = canvas.winfo_width()
+        canvas_h = canvas.winfo_height()
+        margin = 15
+        x_end = canvas_w - margin
+        y = canvas_h - margin
+        x_start = x_end - line_pixels
+
+        # 距离文字
+        if scale_meters >= 1000:
+            dist_text = f"{scale_meters / 1000:.0f}km" if scale_meters % 1000 == 0 else f"{scale_meters / 1000:.1f}km"
         else:
-            scale_text = f"缩放: {round(zoom)} | {meters_per_pixel/1000:.1f}km/像素"
-        self._scale_label.config(text=scale_text)
+            dist_text = f"{scale_meters:.0f}m"
+
+        # 绘制白色背景
+        bg_id = canvas.create_rectangle(x_start - 5, y - 20, x_end + 5, y + 5,
+                                         fill="white", outline="", tags="scale_bar")
+        # 绘制主线段
+        line_id = canvas.create_line(x_start, y, x_end, y,
+                                      fill="black", width=2, tags="scale_bar")
+        # 绘制两端竖线
+        tick1 = canvas.create_line(x_start, y - 5, x_start, y + 5,
+                                    fill="black", width=2, tags="scale_bar")
+        tick2 = canvas.create_line(x_end, y - 5, x_end, y + 5,
+                                    fill="black", width=2, tags="scale_bar")
+        # 绘制距离文字
+        text_id = canvas.create_text((x_start + x_end) / 2, y - 10,
+                                      text=dist_text, fill="black", font=("", 9),
+                                      anchor="s", tags="scale_bar")
+
+        self._scale_bar_items = [bg_id, line_id, tick1, tick2, text_id]
 
     def _find_track_dot_at(self, x, y):
         """查找canvas坐标(x,y)附近的航迹点，返回key (ti,si,pi) 或 None"""
