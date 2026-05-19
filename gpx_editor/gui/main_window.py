@@ -51,6 +51,16 @@ class MainWindow(ttkb.Window):
         self._dragging_track_marker = None
         self._track_drag_data = {}
 
+        # 地图工具和选中状态
+        self._map_tool = "hand"              # 当前工具: "hand" / "rect" / "lasso"
+        self._selected_waypoints = set()     # 选中的航点索引集合
+        self._selection_rect_id = None       # 矩形框选canvas对象ID
+        self._selection_lasso_id = None      # 任意框选canvas对象ID
+        self._selection_points = []          # 框选过程中的坐标点列表
+        self._selection_start_x = 0          # 框选起点x
+        self._selection_start_y = 0          # 框选起点y
+        self._marker_clicked = False         # 标记是否点击了marker
+
         self._setup_ui()
         self._create_menu()
         self._create_main_layout()
@@ -175,6 +185,27 @@ class MainWindow(ttkb.Window):
         # 右侧面板 - 地图
         right_frame = ttk.LabelFrame(paned, text="地图视图", padding=5)
         paned.add(right_frame, weight=2)
+
+        # 地图工具栏
+        toolbar_frame = ttk.Frame(right_frame)
+        toolbar_frame.pack(fill=X, pady=(0, 2))
+
+        self._tool_buttons = {}
+        tool_info = [
+            ("hand", "✋ 手型", "平移地图"),
+            ("rect", "▭ 矩形", "矩形框选航点"),
+            ("lasso", "✏ 任意", "任意框选航点"),
+        ]
+        for tool_id, label, tip in tool_info:
+            btn = ttk.Button(
+                toolbar_frame, text=label, width=8,
+                command=lambda t=tool_id: self._set_map_tool(t)
+            )
+            btn.pack(side=LEFT, padx=2)
+            self._tool_buttons[tool_id] = btn
+
+        # 默认高亮手型工具
+        self._update_tool_buttons()
 
         # 地图组件 - 天地图
         self.map_widget = TkinterMapView(right_frame, corner_radius=0)
@@ -434,6 +465,23 @@ class MainWindow(ttkb.Window):
             self.edit_track(index)
 
     # ========== 地图 ==========
+
+    def _set_map_tool(self, tool):
+        """切换地图工具"""
+        self._map_tool = tool
+        self._update_tool_buttons()
+        if tool == "hand":
+            self.map_widget.canvas.config(cursor="arrow")
+        else:
+            self.map_widget.canvas.config(cursor="crosshair")
+
+    def _update_tool_buttons(self):
+        """更新工具栏按钮高亮状态"""
+        for tool_id, btn in self._tool_buttons.items():
+            if tool_id == self._map_tool:
+                btn.state(["pressed"])
+            else:
+                btn.state(["!pressed"])
 
     def _toggle_satellite(self):
         """切换卫星图层"""
