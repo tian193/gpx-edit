@@ -1234,10 +1234,11 @@ class MainWindow(ttkb.Window):
             except Exception:
                 continue
 
-        # 重绘受影响的航迹路径
+        # 重绘受影响的航迹路径（不刷新整个地图）
         for ti in modified_tracks:
             self._redraw_track_path(ti)
-        self._update_map()
+        # 更新航迹点圆点位置
+        self._update_track_dot_positions()
         self._mark_modified()
         self.status_label.config(text=f"已移动 {len(self._selected_track_points)} 个航迹点")
 
