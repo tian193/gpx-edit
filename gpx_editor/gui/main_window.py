@@ -1218,10 +1218,13 @@ class MainWindow(ttkb.Window):
     def _find_track_dot_at(self, x, y):
         """查找canvas坐标(x,y)附近的航迹点，返回key (ti,si,pi) 或 None"""
         r = 10  # 点击容差半径
+        canvas = self.map_widget.canvas
         for dot_id, ti, si, pi in self._track_point_dots:
-            pos = self._get_track_dot_canvas_pos(ti, si, pi)
-            if pos:
-                cx, cy = pos
+            # 直接获取canvas oval的当前坐标
+            coords = canvas.coords(dot_id)
+            if coords and len(coords) == 4:
+                cx = (coords[0] + coords[2]) / 2
+                cy = (coords[1] + coords[3]) / 2
                 if (x - cx) ** 2 + (y - cy) ** 2 <= r * r:
                     return (ti, si, pi)
         return None
@@ -1740,12 +1743,22 @@ class MainWindow(ttkb.Window):
                 messagebox.showwarning("提示", "偏移量格式不正确", parent=dlg)
                 return
             from ..core.gpx_editor import GpxEditor
+            # 收集受影响的航迹索引
+            affected_tracks = set()
             for pt in points:
                 new_lat, new_lon = GpxEditor.offset_coordinates(pt.latitude, pt.longitude, x_m, y_m)
                 pt.latitude = new_lat
                 pt.longitude = new_lon
+                # 找到该点所属的航迹
+                for ti, track in enumerate(self.gpx_handler.get_tracks()):
+                    for si, seg in enumerate(track.segments):
+                        if pt in seg.points:
+                            affected_tracks.add(ti)
             dlg.destroy()
-            self._update_map()
+            # 只重绘受影响的航迹路径和更新圆点位置
+            for ti in affected_tracks:
+                self._redraw_track_path(ti)
+            self._update_track_dot_positions()
             self._mark_modified()
             self.status_label.config(text=f"已移动 {count} 个航迹点")
 
