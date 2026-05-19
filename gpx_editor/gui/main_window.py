@@ -444,8 +444,8 @@ class MainWindow(ttkb.Window):
         if self._current_map_layer == "road":
             img_url = TiandituTileProvider.get_satellite_url(self._tianditu_key)
             cia_url = TiandituTileProvider.get_annotation_url(self._tianditu_key)
-            self.map_widget.set_tile_server(img_url, max_zoom=18)
             self.map_widget.set_overlay_tile_server(cia_url)
+            self.map_widget.set_tile_server(img_url, max_zoom=18)
             self._current_map_layer = "satellite"
             self.status_label.config(text="已开启卫星图层")
         else:
