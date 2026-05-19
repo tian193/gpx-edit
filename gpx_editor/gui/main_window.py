@@ -36,14 +36,15 @@ class MainWindow(ttkb.Window):
         self.undo_manager = UndoManager()
         self.column_config = ColumnConfigManager()
         self._clipboard = None  # {'type': 'waypoint'|'track', 'data': {...}}
-        self._satellite_overlay = False
         self._current_zone = None
         self._tianditu_key = None
         self._current_map_layer = "road"
 
-        # 拖拽状态
-        self._dragging_marker = None      # 当前拖拽的marker
-        self._drag_data = {}              # {'start_pos': (lat, lon), 'canvas_start': (x, y), 'index': int, 'threshold_met': False}
+        # 航点拖拽模式
+        self._drag_mode = False           # 是否处于拖拽模式
+        self._drag_target = None          # 当前拖拽的marker
+        self._drag_index = -1             # 当前拖拽的航点索引
+        self._drag_data = {}              # 拖拽临时数据
 
         # 航迹点交互状态
         self._track_point_markers = []    # 航迹点marker列表: [(marker, trk_index, seg_index, pt_index), ...]
@@ -102,8 +103,6 @@ class MainWindow(ttkb.Window):
         menubar.add_cascade(label="视图", menu=view_menu)
         view_menu.add_command(label="卫星图层", command=self._toggle_satellite)
         view_menu.add_separator()
-        view_menu.add_command(label="列配置", command=self._open_column_config)
-        view_menu.add_separator()
         view_menu.add_command(label="设置天地图Key", command=self._settings_tianditu_key)
 
         # 导出菜单
@@ -158,13 +157,16 @@ class MainWindow(ttkb.Window):
         tree_frame = ttk.Frame(left_frame)
         tree_frame.pack(fill=BOTH, expand=True)
 
-        scrollbar = ttk.Scrollbar(tree_frame, orient=VERTICAL)
-        scrollbar.pack(side=RIGHT, fill=Y)
+        scrollbar_y = ttk.Scrollbar(tree_frame, orient=VERTICAL)
+        scrollbar_y.pack(side=RIGHT, fill=Y)
+        scrollbar_x = ttk.Scrollbar(tree_frame, orient=HORIZONTAL)
+        scrollbar_x.pack(side=BOTTOM, fill=X)
 
         # 初始化tree占位，后续由_rebuild_tree_columns重建
         self.tree = None
         self._tree_frame = tree_frame
-        self._tree_scrollbar = scrollbar
+        self._tree_scrollbar_y = scrollbar_y
+        self._tree_scrollbar_x = scrollbar_x
         self._rebuild_tree_columns()
 
         # 右键菜单
@@ -183,11 +185,13 @@ class MainWindow(ttkb.Window):
         self._map_markers = []
         self._map_paths = []
 
-        # 地图鼠标悬停显示坐标
+        # 地图鼠标事件
         self.map_widget.canvas.bind("<Motion>", self._on_map_mouse_move)
-
-        # 地图双击插入航迹点
         self.map_widget.canvas.bind("<Double-1>", self._on_map_double_click)
+        # 航点拖拽模式的全局鼠标事件
+        self.map_widget.canvas.bind("<ButtonPress-1>", self._on_map_press, add=True)
+        self.map_widget.canvas.bind("<B1-Motion>", self._on_map_motion, add=True)
+        self.map_widget.canvas.bind("<ButtonRelease-1>", self._on_map_release, add=True)
 
         # 地图右键菜单 - 在此添加航点
         self.map_widget.add_right_click_menu_command(
@@ -235,21 +239,20 @@ class MainWindow(ttkb.Window):
                 return
 
         # 获取滚动条
-        scrollbar = getattr(self, '_tree_scrollbar', None)
-        if scrollbar is None and old_tree:
-            for child in tree_frame.winfo_children():
-                if isinstance(child, ttk.Scrollbar):
-                    scrollbar = child
-                    break
+        scrollbar_y = getattr(self, '_tree_scrollbar_y', None)
+        scrollbar_x = getattr(self, '_tree_scrollbar_x', None)
 
         if old_tree:
             old_tree.destroy()
 
         self.tree = ttk.Treeview(tree_frame, columns=col_ids,
                                   show="tree headings")
-        if scrollbar:
-            scrollbar.config(command=self.tree.yview)
-            self.tree.configure(yscrollcommand=scrollbar.set)
+        if scrollbar_y:
+            scrollbar_y.config(command=self.tree.yview)
+            self.tree.configure(yscrollcommand=scrollbar_y.set)
+        if scrollbar_x:
+            scrollbar_x.config(command=self.tree.xview)
+            self.tree.configure(xscrollcommand=scrollbar_x.set)
 
         # 设置列头
         self.tree.heading("#0", text="")
@@ -262,16 +265,50 @@ class MainWindow(ttkb.Window):
                 col_name = f"{col_name} ({self._current_zone}带)"
             self.tree.heading(col_id, text=col_name)
             width = self.column_config.get_column_width(col_id)
-            self.tree.column(col_id, width=width)
+            self.tree.column(col_id, width=width, minwidth=50)
 
         self.tree.pack(fill=BOTH, expand=True)
-        if scrollbar:
-            scrollbar.pack(side=RIGHT, fill=Y)
 
         # 绑定事件
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
         self.tree.bind("<Double-1>", self._on_tree_double_click)
         self.tree.bind("<Button-3>", self._on_tree_right_click)
+
+    def _show_column_config_popup(self, event):
+        """在列头区域右键显示列配置弹出菜单"""
+        menu = tk.Menu(self, tearoff=0)
+        for col in COLUMN_DEFINITIONS:
+            col_id = col["id"]
+            col_name = col["name"]
+            var = tk.BooleanVar(value=(col_id in self.column_config.visible_columns))
+            menu.add_checkbutton(
+                label=col_name, variable=var,
+                command=lambda cid=col_id, v=var: self._toggle_column(cid, v.get())
+            )
+        menu.add_separator()
+        menu.add_command(label="重置默认列", command=self._reset_columns)
+        menu.post(event.x_root, event.y_root)
+
+    def _toggle_column(self, col_id, visible):
+        """切换列的显示/隐藏"""
+        visible_cols = self.column_config.visible_columns[:]
+        if visible and col_id not in visible_cols:
+            visible_cols.append(col_id)
+        elif not visible and col_id in visible_cols:
+            visible_cols.remove(col_id)
+        self.column_config.visible_columns = visible_cols
+        self.column_config.save()
+        self._rebuild_tree_columns()
+        self._populate_tree()
+
+    def _reset_columns(self):
+        """重置为默认列配置"""
+        from .column_config_dialog import DEFAULT_VISIBLE, DEFAULT_ORDER
+        self.column_config.visible_columns = DEFAULT_VISIBLE[:]
+        self.column_config.column_order = DEFAULT_ORDER[:]
+        self.column_config.save()
+        self._rebuild_tree_columns()
+        self._populate_tree()
 
     def _populate_tree(self):
         """填充树形列表"""
@@ -291,33 +328,19 @@ class MainWindow(ttkb.Window):
 
         visible_cols = self.column_config.get_ordered_visible_columns()
 
-        # 添加航点组
-        if waypoints:
-            wpt_group = self.tree.insert("", END, text=" ", values=self._get_group_values("航点", visible_cols), open=True)
-            for i, wpt in enumerate(waypoints):
-                values = self._get_waypoint_values(wpt, visible_cols)
-                self.tree.insert(wpt_group, END, iid=f"wpt_{i}", text=" ", values=values)
+        # 直接添加航点（不使用分组）
+        for i, wpt in enumerate(waypoints):
+            values = self._get_waypoint_values(wpt, visible_cols)
+            self.tree.insert("", END, iid=f"wpt_{i}", text=" ", values=values)
 
-        # 添加航迹组
+        # 直接添加航迹（不使用分组）
         tracks = self.gpx_handler.get_tracks()
-        if tracks:
-            trk_group = self.tree.insert("", END, text=" ", values=self._get_group_values("航迹", visible_cols), open=True)
-            for i, trk in enumerate(tracks):
-                values = self._get_track_values(trk, visible_cols)
-                self.tree.insert(trk_group, END, iid=f"trk_{i}", text=" ", values=values)
+        for i, trk in enumerate(tracks):
+            values = self._get_track_values(trk, visible_cols)
+            self.tree.insert("", END, iid=f"trk_{i}", text=" ", values=values)
 
         self._update_status_counts()
         self._update_map()
-
-    def _get_group_values(self, group_name, visible_cols):
-        """获取分组行的值"""
-        values = []
-        for col in visible_cols:
-            if col["id"] == "name":
-                values.append(group_name)
-            else:
-                values.append("")
-        return tuple(values)
 
     def _get_waypoint_values(self, wpt, visible_cols):
         """获取航点在各列的值"""
@@ -480,19 +503,19 @@ class MainWindow(ttkb.Window):
         road_url = TiandituTileProvider.get_road_url(api_key)
         self.map_widget.set_tile_server(road_url, max_zoom=18)
 
-        self.map_widget.set_position(39.9, 74.3)
-        self.map_widget.set_zoom(10)
+        self.map_widget.set_position(35.0, 105.0)
+        self.map_widget.set_zoom(5)
 
     def _init_default_map(self):
-        """初始化默认地图（高德）"""
+        """初始化默认地图（OpenStreetMap）"""
         self._tianditu_key = None
         self._current_map_layer = "road"
         self.map_widget.set_tile_server(
-            "https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
-            max_zoom=18
+            "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            max_zoom=19
         )
-        self.map_widget.set_position(39.9, 74.3)
-        self.map_widget.set_zoom(10)
+        self.map_widget.set_position(35.0, 105.0)
+        self.map_widget.set_zoom(5)
 
     def _prompt_api_key(self):
         """提示输入天地图API Key"""
@@ -525,15 +548,10 @@ class MainWindow(ttkb.Window):
             self._current_map_layer = "road"
             self.status_label.config(text="已更新天地图API Key")
 
-    def _open_column_config(self):
-        """打开列配置对话框"""
-        dialog = ColumnConfigDialog(self, self.column_config)
-        if dialog.result:
-            self._rebuild_tree_columns()
-            self._populate_tree()
-
     def _on_map_mouse_move(self, event):
         """鼠标悬停显示坐标"""
+        if getattr(self, '_drag_mode', False):
+            return
         try:
             lat, lon = self.map_widget.convert_canvas_coords_to_decimal_coords(event.x, event.y)
             self.status_label.config(text=f"坐标: {lat:.6f}, {lon:.6f}")
@@ -573,14 +591,14 @@ class MainWindow(ttkb.Window):
         if not self.gpx_handler.gpx:
             return
 
-        # 添加航点标记（不设command，由拖拽逻辑处理点击）
+        # 添加航点标记（点击选中，右键菜单）
         for i, wpt in enumerate(self.gpx_handler.get_waypoints()):
             if wpt.latitude is not None and wpt.longitude is not None:
                 name = wpt.name or f"航点{i+1}"
                 marker = self.map_widget.set_marker(wpt.latitude, wpt.longitude, text=name)
                 self._map_markers.append(marker)
-                # 绑定拖拽事件到marker的canvas元素
-                self._bind_marker_drag(marker, i)
+                # 绑定点击和右键事件
+                self._bind_marker_click(marker, i)
 
         # 添加航迹路径和航迹点标记
         for ti, track in enumerate(self.gpx_handler.get_tracks()):
@@ -632,64 +650,122 @@ class MainWindow(ttkb.Window):
                     zoom = 12
                 self.map_widget.set_zoom(zoom)
 
-    # ========== 航点拖拽 ==========
+    # ========== 航点marker交互 ==========
 
-    def _bind_marker_drag(self, marker, index):
-        """为marker的canvas元素绑定拖拽事件"""
-        # 获取marker的canvas元素（tkintermapview 1.29的属性）
+    def _bind_marker_click(self, marker, index):
+        """为marker绑定点击选中和右键菜单"""
+        items = self._get_marker_canvas_items(marker)
+        for item in items:
+            self.map_widget.canvas.tag_bind(
+                item, '<Button-1>',
+                lambda e, idx=index: self._on_marker_click(idx))
+            self.map_widget.canvas.tag_bind(
+                item, '<Button-3>',
+                lambda e, m=marker, idx=index: self._on_marker_right_click(e, m, idx))
+
+    def _get_marker_canvas_items(self, marker):
+        """获取marker的canvas元素列表"""
         items = []
         for attr in ('polygon', 'big_circle', 'canvas_text', 'canvas_icon', 'canvas_image'):
             item = getattr(marker, attr, None)
             if item:
                 items.append(item)
+        return items
 
-        for item in items:
-            self.map_widget.canvas.tag_bind(item, '<ButtonPress-1>',
-                                            lambda e, m=marker, idx=index: self._on_marker_press(m, idx, e))
-            self.map_widget.canvas.tag_bind(item, '<B1-Motion>',
-                                            lambda e, m=marker, idx=index: self._on_marker_motion(m, idx, e))
-            self.map_widget.canvas.tag_bind(item, '<ButtonRelease-1>',
-                                            lambda e, m=marker, idx=index: self._on_marker_release(m, idx, e))
+    def _on_marker_click(self, index):
+        """点击marker - 在树形列表中选中对应航点"""
+        self.tree.selection_set(f"wpt_{index}")
+        self.tree.see(f"wpt_{index}")
 
-    def _on_marker_press(self, marker, index, event):
-        """鼠标按下 - 记录拖拽起始位置"""
-        self._dragging_marker = marker
+    def _on_marker_right_click(self, event, marker, index):
+        """航点marker右键菜单"""
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="拖拽移动", command=lambda: self._enable_marker_drag(marker, index))
+        menu.add_separator()
+        menu.add_command(label="移动航点...", command=lambda: self._ctx_wpt_move_by_index(index))
+        menu.post(event.x_root, event.y_root)
+
+    def _ctx_wpt_move_by_index(self, index):
+        """通过对话框移动航点"""
+        self._ctx_wpt_index = index
+        self._ctx_wpt_move()
+
+    def _enable_marker_drag(self, marker, index):
+        """启用航点marker拖拽模式"""
+        self._drag_mode = True
+        self._drag_target = marker
+        self._drag_index = index
+        self._drag_data = {}
+        self.map_widget.canvas.config(cursor="fleur")
+        wpt = self.gpx_handler.get_waypoints()[index]
+        self.status_label.config(
+            text=f"拖拽模式: {wpt.name or f'航点{index+1}'} — 按住左键拖拽移动，完成后自动退出")
+
+    def _disable_drag_mode(self):
+        """退出拖拽模式"""
+        self._drag_mode = False
+        self._drag_target = None
+        self._drag_data = {}
+        self._drag_index = -1
+        self.map_widget.canvas.config(cursor="")
+
+    # 全局地图鼠标事件（在 _create_main_layout 中绑定）
+    def _on_map_press(self, event):
+        """地图鼠标按下"""
+        if not getattr(self, '_drag_mode', False):
+            return
+        marker = self._drag_target
+        if not marker:
+            return
+        # 检查点击位置是否在marker附近
+        try:
+            cx, cy = marker.get_canvas_pos(marker.position)
+            dist_sq = (event.x - cx) ** 2 + (event.y - cy) ** 2
+            if dist_sq > 900:  # 30px半径
+                return
+        except Exception:
+            return
         self._drag_data = {
             'start_pos': marker.position,
             'canvas_start': (event.x, event.y),
-            'index': index,
+            'active': True,
             'threshold_met': False
         }
 
-    def _on_marker_motion(self, marker, index, event):
-        """鼠标移动 - 超过阈值后拖拽marker"""
-        if self._dragging_marker != marker or not self._drag_data:
+    def _on_map_motion(self, event):
+        """地图鼠标移动"""
+        if not getattr(self, '_drag_mode', False):
             return
-
-        # 检查是否超过拖拽阈值
+        if not self._drag_data.get('active'):
+            return
+        marker = self._drag_target
+        if not marker:
+            return
         sx, sy = self._drag_data['canvas_start']
         dx = event.x - sx
         dy = event.y - sy
-        if dx * dx + dy * dy > 25:  # 5px阈值
+        if dx * dx + dy * dy > 25:
             self._drag_data['threshold_met'] = True
-
         if self._drag_data['threshold_met']:
-            # 转换canvas坐标为经纬度
             try:
                 lat, lon = self.map_widget.convert_canvas_coords_to_decimal_coords(event.x, event.y)
                 marker.set_position(lat, lon)
             except Exception:
                 pass
 
-    def _on_marker_release(self, marker, index, event):
-        """鼠标释放 - 完成拖拽或处理点击"""
-        if self._dragging_marker != marker:
-            self._dragging_marker = None
-            self._drag_data = {}
+    def _on_map_release(self, event):
+        """地图鼠标释放"""
+        if not getattr(self, '_drag_mode', False):
+            return
+        if not self._drag_data.get('active'):
+            return
+        marker = self._drag_target
+        index = self._drag_index
+        if not marker or index < 0:
+            self._disable_drag_mode()
             return
 
         if self._drag_data.get('threshold_met'):
-            # 拖拽完成，更新GPX数据
             new_lat, new_lon = marker.position
             waypoints = self.gpx_handler.get_waypoints()
             if 0 <= index < len(waypoints):
@@ -705,19 +781,13 @@ class MainWindow(ttkb.Window):
                 self._populate_tree()
                 self._mark_modified()
                 self.status_label.config(
-                    text=f"已移动航点: {wpt.name or f'航点{index+1}'} "
-                         f"({new_lat:.6f}, {new_lon:.6f})")
+                    text=f"已移动航点: {wpt.name or f'航点{index+1}'} ({new_lat:.6f}, {new_lon:.6f})")
         else:
-            # 未超过阈值，视为点击 - 选中对应航点
+            # 未超过阈值，视为点击
             self._on_marker_click(index)
 
-        self._dragging_marker = None
-        self._drag_data = {}
-
-    def _on_marker_click(self, index):
-        """点击marker - 在树形列表中选中对应航点"""
-        self.tree.selection_set(f"wpt_{index}")
-        self.tree.see(f"wpt_{index}")
+        self._disable_drag_mode()
+        self.status_label.config(text="拖拽完成")
 
     # ========== 航迹点拖拽 ==========
 
@@ -975,6 +1045,12 @@ class MainWindow(ttkb.Window):
 
     def _on_tree_right_click(self, event):
         """树形列表右键点击"""
+        # 检查是否点击在列头区域
+        region = self.tree.identify_region(event.x, event.y)
+        if region == "heading":
+            self._show_column_config_popup(event)
+            return
+
         item = self.tree.identify_row(event.y)
         if not item:
             # 更新空白区粘贴状态
