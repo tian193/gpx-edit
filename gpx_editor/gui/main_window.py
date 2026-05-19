@@ -106,6 +106,9 @@ class MainWindow(ttkb.Window):
         edit_menu.add_command(label="添加航点", command=self.add_waypoint, accelerator="Ctrl+Shift+W")
         edit_menu.add_command(label="添加航迹", command=self.add_track, accelerator="Ctrl+Shift+T")
         edit_menu.add_separator()
+        edit_menu.add_command(label="编辑航点", command=self._edit_selected_waypoint)
+        edit_menu.add_command(label="移动航点...", command=self._move_selected_waypoint)
+        edit_menu.add_separator()
         edit_menu.add_command(label="删除选中", command=self._delete_selected, accelerator="Delete")
 
         # 视图菜单
@@ -976,9 +979,11 @@ class MainWindow(ttkb.Window):
     def _on_marker_right_click(self, event, marker, index):
         """航点marker右键菜单"""
         menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="编辑航点", command=lambda: self.edit_waypoint(index))
+        menu.add_command(label="移动航点...", command=lambda: self._ctx_wpt_move_by_index(index))
         menu.add_command(label="拖拽移动", command=lambda: self._enable_marker_drag(marker, index))
         menu.add_separator()
-        menu.add_command(label="移动航点...", command=lambda: self._ctx_wpt_move_by_index(index))
+        menu.add_command(label="删除此航点", command=lambda: self._delete_waypoint_by_index(index))
         menu.post(event.x_root, event.y_root)
 
     def _ctx_wpt_move_by_index(self, index):
@@ -1452,6 +1457,43 @@ class MainWindow(ttkb.Window):
         """右键菜单 - 删除航点"""
         if hasattr(self, '_ctx_wpt_index'):
             self.delete_waypoint(self._ctx_wpt_index)
+
+    def _edit_selected_waypoint(self):
+        """编辑选中的航点（仅单选时可用）"""
+        if len(self._selected_waypoints) != 1:
+            messagebox.showinfo("提示", "请先选中一个航点")
+            return
+        idx = next(iter(self._selected_waypoints))
+        self.edit_waypoint(idx)
+
+    def _move_selected_waypoint(self):
+        """移动选中的航点（仅单选时可用）"""
+        if len(self._selected_waypoints) != 1:
+            messagebox.showinfo("提示", "请先选中一个航点")
+            return
+        idx = next(iter(self._selected_waypoints))
+        self._ctx_wpt_move_by_index(idx)
+
+    def _delete_waypoint_by_index(self, index):
+        """按索引删除航点"""
+        waypoints = self.gpx_handler.get_waypoints()
+        if index < 0 or index >= len(waypoints):
+            return
+        wpt = waypoints[index]
+        name = wpt.name or f"航点{index+1}"
+        if messagebox.askyesno("确认删除", f"确定要删除航点 {name} 吗？"):
+            old_data = {'name': wpt.name, 'lat': wpt.latitude, 'lon': wpt.longitude,
+                        'ele': wpt.elevation, 'desc': wpt.description}
+            self.gpx_handler.remove_waypoint(index)
+            self.undo_manager.push({
+                'type': 'delete_waypoint',
+                'data': {'index': index},
+                'reverse_data': old_data
+            })
+            self._selected_waypoints.discard(index)
+            self._populate_tree()
+            self._mark_modified()
+            self.status_label.config(text=f"已删除航点: {name}")
 
     # 航迹右键菜单方法
     def _ctx_trk_show_on_map(self):
