@@ -288,6 +288,129 @@ class TrackPropertiesDialog:
                 dist_str, time_d_str, speed_str, bear_str
             ))
 
+        # 右键菜单
+        self._point_menu = tk.Menu(self.point_tree, tearoff=0)
+        self._point_menu.add_command(label="删除此航迹点", command=self._delete_selected_point)
+        self._point_menu.add_command(label="移动航迹点...", command=self._move_selected_point)
+        self.point_tree.bind("<Button-3>", self._on_point_right_click)
+
+    def _on_point_right_click(self, event):
+        """右键航迹点列表"""
+        item = self.point_tree.identify_row(event.y)
+        if item:
+            self.point_tree.selection_set(item)
+            self._point_menu.post(event.x_root, event.y_root)
+
+    def _get_selected_point_index(self):
+        """获取选中的航迹点全局索引"""
+        sel = self.point_tree.selection()
+        if not sel:
+            return None
+        values = self.point_tree.item(sel[0], "values")
+        return int(values[0])
+
+    def _delete_selected_point(self):
+        """删除选中的航迹点"""
+        idx = self._get_selected_point_index()
+        if idx is None:
+            return
+        from tkinter import messagebox
+        if not messagebox.askyesno("确认", f"确定要删除航迹点 {idx} 吗？", parent=self.dialog):
+            return
+        # 找到对应的segment和point
+        all_points = []
+        for si, seg in enumerate(self.track.segments):
+            for pi, pt in enumerate(seg.points):
+                all_points.append((si, pi, pt))
+        if 0 <= idx < len(all_points):
+            si, pi, _ = all_points[idx]
+            self.track.segments[si].points.pop(pi)
+            self._refresh_point_list()
+
+    def _move_selected_point(self):
+        """移动选中的航迹点（输入偏移量）"""
+        idx = self._get_selected_point_index()
+        if idx is None:
+            return
+        # 找到对应的点
+        all_points = []
+        for si, seg in enumerate(self.track.segments):
+            for pi, pt in enumerate(seg.points):
+                all_points.append((si, pi, pt))
+        if idx >= len(all_points):
+            return
+        si, pi, pt = all_points[idx]
+
+        # 弹出偏移量输入对话框
+        dlg = tk.Toplevel(self.dialog)
+        dlg.title(f"移动航迹点 {idx}")
+        dlg.transient(self.dialog)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        frame = ttk.Frame(dlg, padding=15)
+        frame.pack(fill=BOTH, expand=True)
+
+        ttk.Label(frame, text=f"当前: {pt.latitude:.6f}, {pt.longitude:.6f}",
+                  foreground="gray").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 10))
+
+        ttk.Label(frame, text="X偏移(米, 正=东):").grid(row=1, column=0, sticky=W, pady=3)
+        x_var = tk.StringVar(value="0")
+        ttk.Entry(frame, textvariable=x_var, width=15).grid(row=1, column=1, padx=(5, 0))
+
+        ttk.Label(frame, text="Y偏移(米, 正=北):").grid(row=2, column=0, sticky=W, pady=3)
+        y_var = tk.StringVar(value="0")
+        ttk.Entry(frame, textvariable=y_var, width=15).grid(row=2, column=1, padx=(5, 0))
+
+        def on_ok():
+            try:
+                x_m = float(x_var.get())
+                y_m = float(y_var.get())
+            except ValueError:
+                messagebox.showwarning("提示", "偏移量格式不正确", parent=dlg)
+                return
+            from ..core.gpx_editor import GpxEditor
+            new_lat, new_lon = GpxEditor.offset_coordinates(pt.latitude, pt.longitude, x_m, y_m)
+            pt.latitude = new_lat
+            pt.longitude = new_lon
+            dlg.destroy()
+            self._refresh_point_list()
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=(10, 0))
+        ttk.Button(btn_frame, text="确定", command=on_ok, width=8).pack(side=LEFT, padx=5)
+        ttk.Button(btn_frame, text="取消", command=dlg.destroy, width=8).pack(side=LEFT, padx=5)
+
+        dlg.update_idletasks()
+        x = self.dialog.winfo_x() + (self.dialog.winfo_width() - dlg.winfo_width()) // 2
+        y = self.dialog.winfo_y() + (self.dialog.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{x}+{y}")
+
+    def _refresh_point_list(self):
+        """刷新航迹点列表"""
+        from ..core.track_stats import get_point_details, format_time_delta, format_direction
+        # 清空列表
+        for item in self.point_tree.get_children():
+            self.point_tree.delete(item)
+        # 重新填充
+        details = get_point_details(self.track)
+        for d in details:
+            time_str = self._format_time(d['time']) if d['time'] else "—"
+            ele_str = f"{d['elevation']:.1f}" if d['elevation'] is not None else "—"
+            lat_str = f"{d['latitude']:.6f}" if d['latitude'] is not None else "—"
+            lon_str = f"{d['longitude']:.6f}" if d['longitude'] is not None else "—"
+            if d['index'] < len(details) - 1:
+                dist_str = f"{d['seg_distance']:.1f}"
+                time_d_str = format_time_delta(d['seg_time']) if d['seg_time'] is not None else "—"
+                speed_str = f"{d['seg_speed']:.1f}" if d['seg_speed'] is not None else "—"
+                bear_str = f"{d['seg_bearing']:.0f}° {format_direction(d['seg_bearing'])}" if d['seg_bearing'] is not None else "—"
+            else:
+                dist_str = time_d_str = speed_str = bear_str = "—"
+            self.point_tree.insert("", END, values=(
+                d['index'], time_str, ele_str, lat_str, lon_str,
+                dist_str, time_d_str, speed_str, bear_str
+            ))
+
     def _create_stats_tab(self, parent):
         """统计汇总标签页"""
         from ..core.track_stats import get_track_statistics, format_time_delta
