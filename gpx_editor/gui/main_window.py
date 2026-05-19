@@ -587,7 +587,7 @@ class MainWindow(ttkb.Window):
                             orig_key = self._track_dot_drag_orig.get(key)
                             if orig_key:
                                 try:
-                                    orig_pos = self.map_widget.convert_decimal_coords_to_canvas_coords(*orig_key)
+                                    orig_pos = self._latlon_to_canvas(*orig_key)
                                     if orig_pos:
                                         new_cx = orig_pos[0] + dx
                                         new_cy = orig_pos[1] + dy
@@ -992,13 +992,23 @@ class MainWindow(ttkb.Window):
     _TRACK_DOT_SELECTED = "#E74C3C"
     _TRACK_DOT_RADIUS = 3
 
+    def _latlon_to_canvas(self, lat, lon):
+        """将经纬度转换为canvas像素坐标"""
+        from tkintermapview.utility_functions import decimal_to_osm
+        widget = self.map_widget
+        tile_pos = decimal_to_osm(lat, lon, round(widget.zoom))
+        tile_w = widget.lower_right_tile_pos[0] - widget.upper_left_tile_pos[0]
+        tile_h = widget.lower_right_tile_pos[1] - widget.upper_left_tile_pos[1]
+        if tile_w == 0 or tile_h == 0:
+            return None
+        cx = ((tile_pos[0] - widget.upper_left_tile_pos[0]) / tile_w) * widget.width
+        cy = ((tile_pos[1] - widget.upper_left_tile_pos[1]) / tile_h) * widget.height
+        return (cx, cy)
+
     def _create_track_dot(self, lat, lon, trk_index, seg_index, pt_index):
         """创建轻量航迹点圆点"""
         canvas = self.map_widget.canvas
-        try:
-            canvas_pos = self.map_widget.convert_decimal_coords_to_canvas_coords(lat, lon)
-        except Exception:
-            return
+        canvas_pos = self._latlon_to_canvas(lat, lon)
         if canvas_pos is None:
             return
         cx, cy = canvas_pos
@@ -1065,11 +1075,7 @@ class MainWindow(ttkb.Window):
                 if 0 <= pt_index < len(seg.points):
                     pt = seg.points[pt_index]
                     if pt.latitude is not None and pt.longitude is not None:
-                        try:
-                            return self.map_widget.convert_decimal_coords_to_canvas_coords(
-                                pt.latitude, pt.longitude)
-                        except Exception:
-                            pass
+                        return self._latlon_to_canvas(pt.latitude, pt.longitude)
         return None
 
     def _update_track_dot_positions(self):
@@ -1118,7 +1124,7 @@ class MainWindow(ttkb.Window):
             orig_lat, orig_lon = orig
             # 计算新位置
             try:
-                orig_pos = self.map_widget.convert_decimal_coords_to_canvas_coords(orig_lat, orig_lon)
+                orig_pos = self._latlon_to_canvas(orig_lat, orig_lon)
                 if orig_pos:
                     new_cx = orig_pos[0] + dx
                     new_cy = orig_pos[1] + dy

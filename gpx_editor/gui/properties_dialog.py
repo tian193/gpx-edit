@@ -267,7 +267,7 @@ class TrackPropertiesDialog:
         # 填充数据
         details = get_point_details(self.track)
         for d in details:
-            time_str = d['time'].strftime("%Y-%m-%d %H:%M:%S") if d['time'] else "—"
+            time_str = self._format_time(d['time']) if d['time'] else "—"
             ele_str = f"{d['elevation']:.1f}" if d['elevation'] is not None else "—"
             lat_str = f"{d['latitude']:.6f}" if d['latitude'] is not None else "—"
             lon_str = f"{d['longitude']:.6f}" if d['longitude'] is not None else "—"
@@ -342,6 +342,20 @@ class TrackPropertiesDialog:
             chart.set_data(data)
         else:
             chart.set_data([])
+
+    @staticmethod
+    def _format_time(dt):
+        """格式化时间，将带时区的时间转为本地时间显示"""
+        if dt is None:
+            return "—"
+        try:
+            if dt.tzinfo is not None:
+                import datetime as _dt
+                local_dt = dt.astimezone(_dt.timezone(_dt.timedelta(hours=8)))
+                return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(dt)
 
     @staticmethod
     def _format_distance(meters):
