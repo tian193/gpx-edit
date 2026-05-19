@@ -694,6 +694,9 @@ class MainWindow(ttkb.Window):
         if not ctrl_pressed:
             self._clear_all_selections()
 
+        # 先更新航迹点canvas坐标，确保选中检测准确
+        self._update_track_dot_positions()
+
         # 遍历所有航点marker，检查是否在矩形范围内
         self._syncing_selection = True
         try:
@@ -706,12 +709,14 @@ class MainWindow(ttkb.Window):
                     self._selected_waypoints.add(i)
                     self._highlight_marker(i)
                     self.tree.selection_add(f"wpt_{i}")
-            # 遍历航迹点圆点，检查是否在矩形范围内
+            # 遍历航迹点圆点，使用canvas实际坐标判断
+            canvas = self.map_widget.canvas
             for dot_id, ti, si, pi in self._track_point_dots:
-                pos = self._get_track_dot_canvas_pos(ti, si, pi)
-                if pos is None:
+                coords = canvas.coords(dot_id)
+                if not coords or len(coords) != 4:
                     continue
-                cx, cy = pos
+                cx = (coords[0] + coords[2]) / 2
+                cy = (coords[1] + coords[3]) / 2
                 if min_x <= cx <= max_x and min_y <= cy <= max_y:
                     key = (ti, si, pi)
                     self._selected_track_points.add(key)
@@ -719,8 +724,6 @@ class MainWindow(ttkb.Window):
         finally:
             self._syncing_selection = False
 
-        # 更新航迹点canvas坐标，确保后续拖动检测准确
-        self._update_track_dot_positions()
         self._update_selection_status()
 
     def _finish_lasso_selection(self, event):
@@ -736,6 +739,9 @@ class MainWindow(ttkb.Window):
         if not ctrl_pressed:
             self._clear_all_selections()
 
+        # 先更新航迹点canvas坐标，确保选中检测准确
+        self._update_track_dot_positions()
+
         self._syncing_selection = True
         try:
             for i, marker in enumerate(self._map_markers):
@@ -747,12 +753,14 @@ class MainWindow(ttkb.Window):
                     self._selected_waypoints.add(i)
                     self._highlight_marker(i)
                     self.tree.selection_add(f"wpt_{i}")
-            # 遍历航迹点圆点，检查是否在多边形内
+            # 遍历航迹点圆点，使用canvas实际坐标判断
+            canvas = self.map_widget.canvas
             for dot_id, ti, si, pi in self._track_point_dots:
-                pos = self._get_track_dot_canvas_pos(ti, si, pi)
-                if pos is None:
+                coords = canvas.coords(dot_id)
+                if not coords or len(coords) != 4:
                     continue
-                cx, cy = pos
+                cx = (coords[0] + coords[2]) / 2
+                cy = (coords[1] + coords[3]) / 2
                 if self._point_in_polygon(cx, cy, polygon):
                     key = (ti, si, pi)
                     self._selected_track_points.add(key)
@@ -760,8 +768,6 @@ class MainWindow(ttkb.Window):
         finally:
             self._syncing_selection = False
 
-        # 更新航迹点canvas坐标，确保后续拖动检测准确
-        self._update_track_dot_positions()
         self._update_selection_status()
 
     @staticmethod
