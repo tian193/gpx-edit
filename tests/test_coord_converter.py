@@ -55,8 +55,14 @@ class TestTiandituTileProvider:
         url = TiandituTileProvider.get_tile_url("vec", "testkey")
         assert "testkey" in url
         assert "vec" in url
-        assert "{s}" in url  # 子域名占位符保留
+        assert "t0.tianditu.gov.cn" in url  # 使用固定子域名
         assert "{x}" in url  # 瓦片坐标占位符保留
+
+    def test_tile_urls_use_https(self):
+        """测试所有瓦片URL使用HTTPS协议"""
+        for layer in ["vec", "img", "cia"]:
+            url = TiandituTileProvider.get_tile_url(layer, "testkey")
+            assert url.startswith("https://"), f"{layer}图层URL应使用HTTPS协议"
 
     def test_get_tile_url_invalid(self):
         """测试无效图层类型"""
