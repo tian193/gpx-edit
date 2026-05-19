@@ -290,60 +290,83 @@ class TrackPropertiesDialog:
 
         # 右键菜单
         self._point_menu = tk.Menu(self.point_tree, tearoff=0)
-        self._point_menu.add_command(label="删除此航迹点", command=self._delete_selected_point)
-        self._point_menu.add_command(label="移动航迹点...", command=self._move_selected_point)
+        self._point_menu.add_command(label="删除选中航迹点", command=self._delete_selected_points)
+        self._point_menu.add_command(label="移动选中航迹点...", command=self._move_selected_points)
         self.point_tree.bind("<Button-3>", self._on_point_right_click)
 
     def _on_point_right_click(self, event):
         """右键航迹点列表"""
         item = self.point_tree.identify_row(event.y)
         if item:
-            self.point_tree.selection_set(item)
+            # 如果右键的项不在当前选中范围内，则单独选中它
+            if item not in self.point_tree.selection():
+                self.point_tree.selection_set(item)
+            self._update_menu_labels()
             self._point_menu.post(event.x_root, event.y_root)
 
-    def _get_selected_point_index(self):
-        """获取选中的航迹点全局索引"""
-        sel = self.point_tree.selection()
-        if not sel:
-            return None
-        values = self.point_tree.item(sel[0], "values")
-        return int(values[0])
+    def _update_menu_labels(self):
+        """根据选中数量更新菜单文字"""
+        count = len(self.point_tree.selection())
+        if count > 1:
+            self._point_menu.entryconfig(0, label=f"删除选中的 {count} 个航迹点")
+            self._point_menu.entryconfig(1, label=f"移动选中的 {count} 个航迹点...")
+        else:
+            self._point_menu.entryconfig(0, label="删除选中航迹点")
+            self._point_menu.entryconfig(1, label="移动选中航迹点...")
 
-    def _delete_selected_point(self):
-        """删除选中的航迹点"""
-        idx = self._get_selected_point_index()
-        if idx is None:
+    def _get_selected_point_indices(self):
+        """获取所有选中的航迹点全局索引列表"""
+        sel = self.point_tree.selection()
+        indices = []
+        for item in sel:
+            values = self.point_tree.item(item, "values")
+            indices.append(int(values[0]))
+        return sorted(indices)
+
+    def _get_all_points_flat(self):
+        """获取所有航迹点的扁平列表 [(seg_index, pt_index, point), ...]"""
+        all_points = []
+        for si, seg in enumerate(self.track.segments):
+            for pi, pt in enumerate(seg.points):
+                all_points.append((si, pi, pt))
+        return all_points
+
+    def _delete_selected_points(self):
+        """删除选中的航迹点（支持多选）"""
+        indices = self._get_selected_point_indices()
+        if not indices:
             return
         from tkinter import messagebox
-        if not messagebox.askyesno("确认", f"确定要删除航迹点 {idx} 吗？", parent=self.dialog):
+        count = len(indices)
+        if not messagebox.askyesno("确认", f"确定要删除 {count} 个航迹点吗？", parent=self.dialog):
             return
-        # 找到对应的segment和point
-        all_points = []
-        for si, seg in enumerate(self.track.segments):
-            for pi, pt in enumerate(seg.points):
-                all_points.append((si, pi, pt))
-        if 0 <= idx < len(all_points):
-            si, pi, _ = all_points[idx]
-            self.track.segments[si].points.pop(pi)
-            self._refresh_point_list()
+        all_points = self._get_all_points_flat()
+        # 从后往前删除，避免索引偏移
+        for idx in reversed(indices):
+            if 0 <= idx < len(all_points):
+                si, pi, _ = all_points[idx]
+                self.track.segments[si].points.pop(pi)
+        self._refresh_point_list()
 
-    def _move_selected_point(self):
-        """移动选中的航迹点（输入偏移量）"""
-        idx = self._get_selected_point_index()
-        if idx is None:
+    def _move_selected_points(self):
+        """移动选中的航迹点（支持多选，输入偏移量）"""
+        indices = self._get_selected_point_indices()
+        if not indices:
             return
-        # 找到对应的点
-        all_points = []
-        for si, seg in enumerate(self.track.segments):
-            for pi, pt in enumerate(seg.points):
-                all_points.append((si, pi, pt))
-        if idx >= len(all_points):
+        all_points = self._get_all_points_flat()
+        # 收集要移动的点
+        points_to_move = []
+        for idx in indices:
+            if 0 <= idx < len(all_points):
+                si, pi, pt = all_points[idx]
+                points_to_move.append(pt)
+        if not points_to_move:
             return
-        si, pi, pt = all_points[idx]
 
+        count = len(points_to_move)
         # 弹出偏移量输入对话框
         dlg = tk.Toplevel(self.dialog)
-        dlg.title(f"移动航迹点 {idx}")
+        dlg.title(f"移动 {count} 个航迹点")
         dlg.transient(self.dialog)
         dlg.grab_set()
         dlg.resizable(False, False)
@@ -351,8 +374,13 @@ class TrackPropertiesDialog:
         frame = ttk.Frame(dlg, padding=15)
         frame.pack(fill=BOTH, expand=True)
 
-        ttk.Label(frame, text=f"当前: {pt.latitude:.6f}, {pt.longitude:.6f}",
-                  foreground="gray").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 10))
+        if count == 1:
+            pt = points_to_move[0]
+            ttk.Label(frame, text=f"当前: {pt.latitude:.6f}, {pt.longitude:.6f}",
+                      foreground="gray").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 10))
+        else:
+            ttk.Label(frame, text=f"将对 {count} 个航迹点应用相同的偏移量",
+                      foreground="gray").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 10))
 
         ttk.Label(frame, text="X偏移(米, 正=东):").grid(row=1, column=0, sticky=W, pady=3)
         x_var = tk.StringVar(value="0")
@@ -370,9 +398,10 @@ class TrackPropertiesDialog:
                 messagebox.showwarning("提示", "偏移量格式不正确", parent=dlg)
                 return
             from ..core.gpx_editor import GpxEditor
-            new_lat, new_lon = GpxEditor.offset_coordinates(pt.latitude, pt.longitude, x_m, y_m)
-            pt.latitude = new_lat
-            pt.longitude = new_lon
+            for pt in points_to_move:
+                new_lat, new_lon = GpxEditor.offset_coordinates(pt.latitude, pt.longitude, x_m, y_m)
+                pt.latitude = new_lat
+                pt.longitude = new_lon
             dlg.destroy()
             self._refresh_point_list()
 

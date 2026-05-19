@@ -231,6 +231,8 @@ class MainWindow(ttkb.Window):
         self.map_widget.draw_move = self._patched_draw_move
         self._orig_draw_initial_array = self.map_widget.draw_initial_array
         self.map_widget.draw_initial_array = self._patched_draw_initial_array
+        self._orig_update_canvas_tile_images = self.map_widget.update_canvas_tile_images
+        self.map_widget.update_canvas_tile_images = self._patched_update_canvas_tile_images
 
         # 地图鼠标事件
         self.map_widget.canvas.bind("<Motion>", self._on_map_mouse_move)
@@ -1035,6 +1037,8 @@ class MainWindow(ttkb.Window):
         """批量创建航迹点圆点（延迟调用，确保视口已设置）"""
         for lat, lon, ti, si, pi in points_data:
             self._create_track_dot(lat, lon, ti, si, pi)
+        # 确保航迹点圆点在最上层
+        self.map_widget.canvas.tag_raise("track_dot")
 
     def _on_track_dot_click(self, trk_index, seg_index, pt_index, event):
         """点击航迹点圆点"""
@@ -1099,6 +1103,8 @@ class MainWindow(ttkb.Window):
             if pos:
                 cx, cy = pos
                 canvas.coords(dot_id, cx - r, cy - r, cx + r, cy + r)
+        # 确保航迹点圆点在最上层（不被瓦片图片覆盖）
+        canvas.tag_raise("track_dot")
 
     def _patched_draw_move(self, called_after_zoom=False):
         """地图重绘后更新航迹点圆点位置"""
@@ -1111,6 +1117,12 @@ class MainWindow(ttkb.Window):
         self._orig_draw_initial_array()
         if self._track_point_dots:
             self.after(10, self._update_track_dot_positions)
+
+    def _patched_update_canvas_tile_images(self):
+        """瓦片图片加载后确保航迹点圆点在最上层"""
+        self._orig_update_canvas_tile_images()
+        if self._track_point_dots:
+            self.map_widget.canvas.tag_raise("track_dot")
 
     def _find_track_dot_at(self, x, y):
         """查找canvas坐标(x,y)附近的航迹点，返回key (ti,si,pi) 或 None"""
