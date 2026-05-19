@@ -222,6 +222,11 @@ class MainWindow(ttkb.Window):
         self.map_widget.pack(fill=BOTH, expand=True)
         self._init_tianditu_map()
 
+        # 比例尺标签（右下角）
+        self._scale_label = ttk.Label(self.map_widget, text="缩放: 5", font=("", 9),
+                                       background="#FFFFFF", padding=(4, 2))
+        self._scale_label.place(relx=1.0, rely=1.0, anchor="se", x=-10, y=-10)
+
         # 地图标记引用
         self._map_markers = []
         self._map_paths = []
@@ -551,6 +556,7 @@ class MainWindow(ttkb.Window):
                     self._dragging_track_dots = True
                     self._track_dot_drag_start = (event.x, event.y)
                     self._track_dot_drag_orig = {}  # {key: (lat, lon)}
+                    self._track_dot_drag_orig_canvas = {}  # {key: (cx, cy)}
                     tracks = self.gpx_handler.get_tracks()
                     for key in self._selected_track_points:
                         ti, si, pi = key
@@ -559,6 +565,12 @@ class MainWindow(ttkb.Window):
                             if 0 <= pi < len(seg.points):
                                 pt = seg.points[pi]
                                 self._track_dot_drag_orig[key] = (pt.latitude, pt.longitude)
+                                # 保存原始canvas坐标
+                                canvas_pos = self._latlon_to_canvas(pt.latitude, pt.longitude)
+                                if canvas_pos:
+                                    self._track_dot_drag_orig_canvas[key] = canvas_pos
+                    # 禁止地图平移
+                    self.map_widget.selection_mode = True
                     return
             self._selection_start_x = event.x
             self._selection_start_y = event.y
@@ -581,23 +593,16 @@ class MainWindow(ttkb.Window):
             dy = event.y - self._track_dot_drag_start[1]
             canvas = self.map_widget.canvas
             r = self._TRACK_DOT_RADIUS
+            # 使用预保存的canvas坐标，避免重复计算
             for key in self._selected_track_points:
+                orig_pos = self._track_dot_drag_orig_canvas.get(key)
+                if not orig_pos:
+                    continue
                 for dot_id, ti, si, pi in self._track_point_dots:
                     if (ti, si, pi) == key:
-                        pos = self._get_track_dot_canvas_pos(ti, si, pi)
-                        if pos:
-                            orig_cx, orig_cy = pos
-                            # 计算原始位置（拖拽前）
-                            orig_key = self._track_dot_drag_orig.get(key)
-                            if orig_key:
-                                try:
-                                    orig_pos = self._latlon_to_canvas(*orig_key)
-                                    if orig_pos:
-                                        new_cx = orig_pos[0] + dx
-                                        new_cy = orig_pos[1] + dy
-                                        canvas.coords(dot_id, new_cx - r, new_cy - r, new_cx + r, new_cy + r)
-                                except Exception:
-                                    pass
+                        new_cx = orig_pos[0] + dx
+                        new_cy = orig_pos[1] + dy
+                        canvas.coords(dot_id, new_cx - r, new_cy - r, new_cx + r, new_cy + r)
                         break
             return
         if self._map_tool == "rect":
@@ -628,6 +633,9 @@ class MainWindow(ttkb.Window):
         if self._dragging_track_dots:
             self._finish_track_dot_drag(event)
             self._dragging_track_dots = False
+            # 恢复地图平移
+            if self._map_tool == "hand":
+                self.map_widget.selection_mode = False
             return
         if self._map_tool == "hand":
             dx = abs(event.x - self._selection_start_x)
@@ -786,12 +794,12 @@ class MainWindow(ttkb.Window):
             img_url = TiandituTileProvider.get_satellite_url(self._tianditu_key)
             cia_url = TiandituTileProvider.get_annotation_url(self._tianditu_key)
             self.map_widget.set_overlay_tile_server(cia_url)
-            self.map_widget.set_tile_server(img_url, max_zoom=18)
+            self.map_widget.set_tile_server(img_url, max_zoom=19)
             self._current_map_layer = "satellite"
             self.status_label.config(text="已开启卫星图层")
         else:
             road_url = TiandituTileProvider.get_road_url(self._tianditu_key)
-            self.map_widget.set_tile_server(road_url, max_zoom=18)
+            self.map_widget.set_tile_server(road_url, max_zoom=19)
             self.map_widget.set_overlay_tile_server(None)
             self._current_map_layer = "road"
             self.status_label.config(text="已关闭卫星图层")
@@ -842,7 +850,7 @@ class MainWindow(ttkb.Window):
         self._current_map_layer = "road"
 
         road_url = TiandituTileProvider.get_road_url(api_key)
-        self.map_widget.set_tile_server(road_url, max_zoom=18)
+        self.map_widget.set_tile_server(road_url, max_zoom=19)
 
         self.map_widget.set_position(35.0, 105.0)
         self.map_widget.set_zoom(5)
@@ -853,7 +861,7 @@ class MainWindow(ttkb.Window):
         self._current_map_layer = "road"
         self.map_widget.set_tile_server(
             "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
-            max_zoom=19
+            max_zoom=20
         )
         self.map_widget.set_position(35.0, 105.0)
         self.map_widget.set_zoom(5)
@@ -1130,6 +1138,8 @@ class MainWindow(ttkb.Window):
         self._orig_draw_move(called_after_zoom)
         if self._track_point_dots:
             self._update_track_dot_positions()
+        # 更新比例尺
+        self._update_scale_label()
 
     def _patched_draw_initial_array(self):
         """地图初始数组重绘后更新航迹点圆点位置"""
@@ -1142,6 +1152,32 @@ class MainWindow(ttkb.Window):
         self._orig_update_canvas_tile_images()
         if self._track_point_dots:
             self.map_widget.canvas.tag_raise("track_dot")
+
+    def _update_scale_label(self):
+        """更新比例尺标签"""
+        zoom = self.map_widget.zoom
+        # 计算比例尺（每像素对应的地面距离）
+        # 在纬度0度处，zoom级别z时，1像素 ≈ 156543.03 * cos(0) / 2^z 米
+        import math
+        lat = self.map_widget.upper_left_tile_pos[1]  # 近似纬度
+        # 使用中心纬度
+        center_tile_y = (self.map_widget.upper_left_tile_pos[1] + self.map_widget.lower_right_tile_pos[1]) / 2
+        # 将tile y转换为纬度
+        n = 2 ** round(zoom)
+        lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * center_tile_y / n)))
+        lat_deg = math.degrees(lat_rad)
+        # 每像素对应的地面距离（米）
+        meters_per_pixel = 156543.03 * math.cos(math.radians(lat_deg)) / (2 ** round(zoom))
+        # 选择合适的比例尺长度
+        if meters_per_pixel < 0.5:
+            scale_text = f"缩放: {round(zoom)} | {meters_per_pixel*100:.0f}cm/像素"
+        elif meters_per_pixel < 100:
+            scale_text = f"缩放: {round(zoom)} | {meters_per_pixel:.1f}m/像素"
+        elif meters_per_pixel < 1000:
+            scale_text = f"缩放: {round(zoom)} | {meters_per_pixel:.0f}m/像素"
+        else:
+            scale_text = f"缩放: {round(zoom)} | {meters_per_pixel/1000:.1f}km/像素"
+        self._scale_label.config(text=scale_text)
 
     def _find_track_dot_at(self, x, y):
         """查找canvas坐标(x,y)附近的航迹点，返回key (ti,si,pi) 或 None"""
