@@ -217,8 +217,14 @@ class MainWindow(ttkb.Window):
         # 默认高亮手型工具
         self._update_tool_buttons()
 
+        # 地图瓦片磁盘缓存
+        config_dir = os.path.expanduser("~/.gpx_editor")
+        os.makedirs(config_dir, exist_ok=True)
+        tile_db_path = os.path.join(config_dir, "tile_cache.db")
+
         # 地图组件 - 天地图
-        self.map_widget = TkinterMapView(right_frame, corner_radius=0)
+        self.map_widget = TkinterMapView(right_frame, corner_radius=0,
+                                          database_path=tile_db_path)
         self.map_widget.pack(fill=BOTH, expand=True)
         self._init_tianditu_map()
 
