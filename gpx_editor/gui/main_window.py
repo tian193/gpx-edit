@@ -567,8 +567,35 @@ class MainWindow(ttkb.Window):
             self.status_label.config(text=f"已选中 {count} 个航点")
 
     def _finish_rect_selection(self, event):
-        """完成矩形框选（待实现）"""
+        """完成矩形框选"""
+        x0, y0 = self._selection_start_x, self._selection_start_y
+        x1, y1 = event.x, event.y
+        min_x, max_x = min(x0, x1), max(x0, x1)
+        min_y, max_y = min(y0, y1), max(y0, y1)
+
         self._clear_selection_graphics()
+
+        # 忽略太小的框选
+        if max_x - min_x < 5 and max_y - min_y < 5:
+            return
+
+        # 如果不按Ctrl，先清除已有选中
+        ctrl_pressed = event.state & 0x4
+        if not ctrl_pressed:
+            self._clear_all_selections()
+
+        # 遍历所有航点marker，检查是否在矩形范围内
+        for i, marker in enumerate(self._map_markers):
+            canvas_pos = self._get_marker_canvas_pos(marker)
+            if canvas_pos is None:
+                continue
+            cx, cy = canvas_pos
+            if min_x <= cx <= max_x and min_y <= cy <= max_y:
+                self._selected_waypoints.add(i)
+                self._highlight_marker(i)
+                self.tree.selection_add(f"wpt_{i}")
+
+        self._update_selection_status()
 
     def _finish_lasso_selection(self, event):
         """完成任意框选（待实现）"""
