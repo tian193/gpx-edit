@@ -549,8 +549,8 @@ class MainWindow(ttkb.Window):
 
         # 在任何工具模式下，如果点击了已选中的航迹点，开始拖动
         if self._selected_track_points:
-            clicked_dot = self._find_track_dot_at(event.x, event.y)
-            if clicked_dot and clicked_dot in self._selected_track_points:
+            clicked_dot = self._find_track_dot_at(event.x, event.y, selected_only=True)
+            if clicked_dot:
                 self._dragging_track_dots = True
                 self._track_dot_drag_start = (event.x, event.y)
                 self._track_dot_drag_orig = {}
@@ -1219,27 +1219,49 @@ class MainWindow(ttkb.Window):
 
         self._scale_bar_items = [bg_id, line_id, tick1, tick2, text_id]
 
-    def _find_track_dot_at(self, x, y):
-        """查找canvas坐标(x,y)附近的航迹点，返回key (ti,si,pi) 或 None"""
-        r = 10  # 点击容差半径
+    def _find_track_dot_at(self, x, y, selected_only=False):
+        """查找canvas坐标(x,y)附近的航迹点，返回key (ti,si,pi) 或 None
+
+        Args:
+            selected_only: 如果为True，只在已选中的点中查找
+        """
+        r = 15  # 点击容差半径（增大以提高命中率）
         r_sq = r * r
-        # 优先使用canvas oval的实际坐标
+        best_key = None
+        best_dist_sq = r_sq + 1
+
+        # 使用canvas oval的实际坐标
         canvas = self.map_widget.canvas
         for dot_id, ti, si, pi in self._track_point_dots:
+            key = (ti, si, pi)
+            if selected_only and key not in self._selected_track_points:
+                continue
             coords = canvas.coords(dot_id)
             if coords and len(coords) == 4:
                 cx = (coords[0] + coords[2]) / 2
                 cy = (coords[1] + coords[3]) / 2
-                if (x - cx) ** 2 + (y - cy) ** 2 <= r_sq:
-                    return (ti, si, pi)
-        # 如果没找到，尝试用当前视口重新计算位置（canvas坐标可能未更新）
-        for dot_id, ti, si, pi in self._track_point_dots:
-            pos = self._get_track_dot_canvas_pos(ti, si, pi)
-            if pos:
-                cx, cy = pos
-                if (x - cx) ** 2 + (y - cy) ** 2 <= r_sq:
-                    return (ti, si, pi)
-        return None
+                dist_sq = (x - cx) ** 2 + (y - cy) ** 2
+                if dist_sq <= r_sq and dist_sq < best_dist_sq:
+                    best_dist_sq = dist_sq
+                    best_key = key
+                    if dist_sq == 0:
+                        break  # 完全命中，无需继续
+
+        # 如果canvas坐标没找到，用视口重算
+        if best_key is None:
+            for dot_id, ti, si, pi in self._track_point_dots:
+                key = (ti, si, pi)
+                if selected_only and key not in self._selected_track_points:
+                    continue
+                pos = self._get_track_dot_canvas_pos(ti, si, pi)
+                if pos:
+                    cx, cy = pos
+                    dist_sq = (x - cx) ** 2 + (y - cy) ** 2
+                    if dist_sq <= r_sq and dist_sq < best_dist_sq:
+                        best_dist_sq = dist_sq
+                        best_key = key
+
+        return best_key
 
     def _finish_track_dot_drag(self, event):
         """完成航迹点拖动"""
