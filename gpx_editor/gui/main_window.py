@@ -60,6 +60,7 @@ class MainWindow(ttkb.Window):
         self._selection_start_x = 0          # 框选起点x
         self._selection_start_y = 0          # 框选起点y
         self._marker_clicked = False         # 标记是否点击了marker
+        self._syncing_selection = False      # 防止选中同步的递归触发
 
         self._setup_ui()
         self._create_menu()
@@ -444,6 +445,9 @@ class MainWindow(ttkb.Window):
 
     def _on_tree_select(self, event):
         """树形列表选择事件"""
+        if self._syncing_selection:
+            return
+
         selected = self.tree.selection()
 
         # 同步地图marker高亮
@@ -458,6 +462,7 @@ class MainWindow(ttkb.Window):
                 self._highlight_marker(idx)
 
         if not selected:
+            self.status_label.config(text="就绪")
             return
         iid = selected[0]
         if iid.startswith("wpt_"):
@@ -608,15 +613,19 @@ class MainWindow(ttkb.Window):
             self._clear_all_selections()
 
         # 遍历所有航点marker，检查是否在矩形范围内
-        for i, marker in enumerate(self._map_markers):
-            canvas_pos = self._get_marker_canvas_pos(marker)
-            if canvas_pos is None:
-                continue
-            cx, cy = canvas_pos
-            if min_x <= cx <= max_x and min_y <= cy <= max_y:
-                self._selected_waypoints.add(i)
-                self._highlight_marker(i)
-                self.tree.selection_add(f"wpt_{i}")
+        self._syncing_selection = True
+        try:
+            for i, marker in enumerate(self._map_markers):
+                canvas_pos = self._get_marker_canvas_pos(marker)
+                if canvas_pos is None:
+                    continue
+                cx, cy = canvas_pos
+                if min_x <= cx <= max_x and min_y <= cy <= max_y:
+                    self._selected_waypoints.add(i)
+                    self._highlight_marker(i)
+                    self.tree.selection_add(f"wpt_{i}")
+        finally:
+            self._syncing_selection = False
 
         self._update_selection_status()
 
@@ -632,16 +641,20 @@ class MainWindow(ttkb.Window):
         if not ctrl_pressed:
             self._clear_all_selections()
 
-        polygon = self._selection_points
-        for i, marker in enumerate(self._map_markers):
-            canvas_pos = self._get_marker_canvas_pos(marker)
-            if canvas_pos is None:
-                continue
-            cx, cy = canvas_pos
-            if self._point_in_polygon(cx, cy, polygon):
-                self._selected_waypoints.add(i)
-                self._highlight_marker(i)
-                self.tree.selection_add(f"wpt_{i}")
+        self._syncing_selection = True
+        try:
+            polygon = self._selection_points
+            for i, marker in enumerate(self._map_markers):
+                canvas_pos = self._get_marker_canvas_pos(marker)
+                if canvas_pos is None:
+                    continue
+                cx, cy = canvas_pos
+                if self._point_in_polygon(cx, cy, polygon):
+                    self._selected_waypoints.add(i)
+                    self._highlight_marker(i)
+                    self.tree.selection_add(f"wpt_{i}")
+        finally:
+            self._syncing_selection = False
 
         self._update_selection_status()
 
@@ -891,57 +904,52 @@ class MainWindow(ttkb.Window):
     _MARKER_COLOR_SELECTED_CIRCLE = "#E8430E"
     _MARKER_COLOR_SELECTED_OUTSIDE = "#FF6B35"
 
-    def _highlight_marker(self, index):
-        """高亮指定索引的marker"""
+    def _set_marker_color(self, index, circle_color, outside_color):
+        """直接修改marker的canvas对象颜色（不删除/重建）"""
         if index < 0 or index >= len(self._map_markers):
             return
         marker = self._map_markers[index]
-        marker.marker_color_circle = self._MARKER_COLOR_SELECTED_CIRCLE
-        marker.marker_color_outside = self._MARKER_COLOR_SELECTED_OUTSIDE
-        self.map_widget.canvas.delete(marker.polygon)
-        self.map_widget.canvas.delete(marker.big_circle)
-        self.map_widget.canvas.delete(marker.canvas_text)
-        if hasattr(marker, 'canvas_icon') and marker.canvas_icon:
-            self.map_widget.canvas.delete(marker.canvas_icon)
-        if hasattr(marker, 'canvas_image') and marker.canvas_image:
-            self.map_widget.canvas.delete(marker.canvas_image)
-        marker.draw()
-        self._bind_marker_click(marker, index)
+        marker.marker_color_circle = circle_color
+        marker.marker_color_outside = outside_color
+        canvas = self.map_widget.canvas
+        if marker.polygon:
+            canvas.itemconfigure(marker.polygon, fill=outside_color, outline=outside_color)
+        if marker.big_circle:
+            canvas.itemconfigure(marker.big_circle, fill=circle_color, outline=outside_color)
+
+    def _highlight_marker(self, index):
+        """高亮指定索引的marker"""
+        self._set_marker_color(index, self._MARKER_COLOR_SELECTED_CIRCLE, self._MARKER_COLOR_SELECTED_OUTSIDE)
 
     def _unhighlight_marker(self, index):
         """取消指定索引marker的高亮"""
-        if index < 0 or index >= len(self._map_markers):
-            return
-        marker = self._map_markers[index]
-        marker.marker_color_circle = self._MARKER_COLOR_DEFAULT_CIRCLE
-        marker.marker_color_outside = self._MARKER_COLOR_DEFAULT_OUTSIDE
-        self.map_widget.canvas.delete(marker.polygon)
-        self.map_widget.canvas.delete(marker.big_circle)
-        self.map_widget.canvas.delete(marker.canvas_text)
-        if hasattr(marker, 'canvas_icon') and marker.canvas_icon:
-            self.map_widget.canvas.delete(marker.canvas_icon)
-        if hasattr(marker, 'canvas_image') and marker.canvas_image:
-            self.map_widget.canvas.delete(marker.canvas_image)
-        marker.draw()
-        self._bind_marker_click(marker, index)
+        self._set_marker_color(index, self._MARKER_COLOR_DEFAULT_CIRCLE, self._MARKER_COLOR_DEFAULT_OUTSIDE)
 
     def _clear_all_selections(self):
         """清除所有选中状态"""
-        for idx in list(self._selected_waypoints):
-            self._unhighlight_marker(idx)
-        self._selected_waypoints.clear()
-        self.tree.selection_set()
+        self._syncing_selection = True
+        try:
+            for idx in list(self._selected_waypoints):
+                self._unhighlight_marker(idx)
+            self._selected_waypoints.clear()
+            self.tree.selection_set()
+        finally:
+            self._syncing_selection = False
         self.status_label.config(text="就绪")
         self._clear_selection_graphics()
 
     def _select_all_waypoints(self):
         """全选所有航点"""
         self._clear_all_selections()
-        waypoints = self.gpx_handler.get_waypoints()
-        for i in range(len(waypoints)):
-            self._selected_waypoints.add(i)
-            self._highlight_marker(i)
-            self.tree.selection_add(f"wpt_{i}")
+        self._syncing_selection = True
+        try:
+            waypoints = self.gpx_handler.get_waypoints()
+            for i in range(len(waypoints)):
+                self._selected_waypoints.add(i)
+                self._highlight_marker(i)
+                self.tree.selection_add(f"wpt_{i}")
+        finally:
+            self._syncing_selection = False
         self._update_selection_status()
 
     def _bind_marker_click(self, marker, index):
@@ -967,15 +975,19 @@ class MainWindow(ttkb.Window):
     def _on_marker_click(self, index):
         """点击marker - 选中/取消选中航点"""
         self._marker_clicked = True
-        if index in self._selected_waypoints:
-            self._selected_waypoints.discard(index)
-            self._unhighlight_marker(index)
-            self.tree.selection_remove(f"wpt_{index}")
-        else:
-            self._selected_waypoints.add(index)
-            self._highlight_marker(index)
-            self.tree.selection_set(f"wpt_{index}")
-            self.tree.see(f"wpt_{index}")
+        self._syncing_selection = True
+        try:
+            if index in self._selected_waypoints:
+                self._selected_waypoints.discard(index)
+                self._unhighlight_marker(index)
+                self.tree.selection_remove(f"wpt_{index}")
+            else:
+                self._selected_waypoints.add(index)
+                self._highlight_marker(index)
+                self.tree.selection_set(f"wpt_{index}")
+                self.tree.see(f"wpt_{index}")
+        finally:
+            self._syncing_selection = False
         self._update_selection_status()
 
     def _on_marker_right_click(self, event, marker, index):

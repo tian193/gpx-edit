@@ -25,9 +25,10 @@ class MoveWaypointDialog:
         self.result = None
         self.map_widget = map_widget
         self.waypoint = waypoint
-        self._click_binding = None
         self._esc_binding = None
         self._temp_marker = None
+        self._original_btn1_bind = None
+        self._map_click_active = False
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(f"移动航点 — {waypoint.name or '未命名'}")
@@ -286,8 +287,8 @@ class MoveWaypointDialog:
             # 手动输入
             self._handle_manual_input()
         elif tab_index == 1:
-            # 地图选点
-            self.dialog.destroy()
+            # 地图选点 - 隐藏对话框，等待地图点击
+            self.dialog.withdraw()
             self._start_map_click()
         elif tab_index == 2:
             # 精细移动
@@ -321,8 +322,8 @@ class MoveWaypointDialog:
             # CGCS2000 模式
             try:
                 zone = int(self.zone_var.get())
-                if not (19 <= zone <= 42):
-                    messagebox.showwarning("提示", "6度带带号必须在 19 到 42 之间（中国范围）", parent=self.dialog)
+                if not (13 <= zone <= 23):
+                    messagebox.showwarning("提示", "6度带带号必须在 13 到 23 之间（中国范围）", parent=self.dialog)
                     return
             except ValueError:
                 messagebox.showwarning("提示", "带号格式不正确", parent=self.dialog)
@@ -376,6 +377,8 @@ class MoveWaypointDialog:
         self.dialog.destroy()
 
     def _on_cancel(self):
+        if self._map_click_active:
+            self._cleanup_map_click()
         self.dialog.destroy()
 
     # ============================================================
@@ -391,48 +394,62 @@ class MoveWaypointDialog:
                     wpt.latitude, wpt.longitude,
                     text=f"当前: {wpt.name}" if wpt.name else "当前"
                 )
-                # 尝试设置红色标记（marker颜色由库决定，此处尽量标注）
             except Exception:
                 pass
 
         # 改变光标
         self.map_widget.canvas.config(cursor="crosshair")
+        self._map_click_active = True
 
-        # 绑定点击事件
-        self._click_binding = self.map_widget.canvas.bind("<Button-1>", self._on_map_click)
+        # 保存原始绑定，然后替换为选点处理
+        self._original_btn1_bind = self.map_widget.canvas.bind("<Button-1>")
+        self.map_widget.canvas.bind("<Button-1>", self._on_map_click)
 
-        # 绑定ESC取消（绑定到主窗口）
+        # 绑定ESC取消
         top_level = self.map_widget.winfo_toplevel()
         self._esc_binding = top_level.bind("<Escape>", self._cancel_map_click)
 
     def _on_map_click(self, event):
         """地图点击回调"""
+        if not getattr(self, '_map_click_active', False):
+            return "break"
+        self._map_click_active = False
         try:
             lat, lon = self.map_widget.convert_canvas_coords_to_decimal_coords(event.x, event.y)
             self.result = (lat, lon)
         except Exception:
-            pass
+            self.result = None
         self._cleanup_map_click()
+        self.dialog.destroy()
+        return "break"  # 阻止事件继续传播到地图的平移处理
 
     def _cancel_map_click(self, event=None):
         """取消地图点击"""
+        self._map_click_active = False
         self._cleanup_map_click()
+        self.dialog.deiconify()
 
     def _cleanup_map_click(self):
         """清理地图点击绑定和临时标记"""
         # 恢复光标
         self.map_widget.canvas.config(cursor="")
 
-        # 解绑点击事件（使用回调ID选择性解绑）
-        if self._click_binding:
-            self.map_widget.canvas.unbind("<Button-1>", self._click_binding)
-            self._click_binding = None
+        # 恢复原始绑定（不要unbind，否则会删掉地图自身的平移绑定）
+        try:
+            if self._original_btn1_bind:
+                self.map_widget.canvas.bind("<Button-1>", self._original_btn1_bind)
+                self._original_btn1_bind = None
+        except Exception:
+            pass
 
-        # 解绑ESC（使用回调ID选择性解绑）
-        top_level = self.map_widget.winfo_toplevel()
-        if self._esc_binding:
-            top_level.unbind("<Escape>", self._esc_binding)
-            self._esc_binding = None
+        # 解绑ESC
+        try:
+            top_level = self.map_widget.winfo_toplevel()
+            if self._esc_binding:
+                top_level.unbind("<Escape>", self._esc_binding)
+                self._esc_binding = None
+        except Exception:
+            pass
 
         # 删除临时标记
         if self._temp_marker:
