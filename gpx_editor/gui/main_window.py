@@ -711,6 +711,56 @@ class MainWindow(ttkb.Window):
 
     # ========== 航点marker交互 ==========
 
+    # 默认marker颜色
+    _MARKER_COLOR_DEFAULT_CIRCLE = "#9B261E"
+    _MARKER_COLOR_DEFAULT_OUTSIDE = "#C5542D"
+    # 选中marker颜色
+    _MARKER_COLOR_SELECTED_CIRCLE = "#E8430E"
+    _MARKER_COLOR_SELECTED_OUTSIDE = "#FF6B35"
+
+    def _highlight_marker(self, index):
+        """高亮指定索引的marker"""
+        if index < 0 or index >= len(self._map_markers):
+            return
+        marker = self._map_markers[index]
+        marker.marker_color_circle = self._MARKER_COLOR_SELECTED_CIRCLE
+        marker.marker_color_outside = self._MARKER_COLOR_SELECTED_OUTSIDE
+        self.map_widget.canvas.delete(marker.polygon)
+        self.map_widget.canvas.delete(marker.big_circle)
+        self.map_widget.canvas.delete(marker.canvas_text)
+        if hasattr(marker, 'canvas_icon') and marker.canvas_icon:
+            self.map_widget.canvas.delete(marker.canvas_icon)
+        if hasattr(marker, 'canvas_image') and marker.canvas_image:
+            self.map_widget.canvas.delete(marker.canvas_image)
+        marker.draw()
+        self._bind_marker_click(marker, index)
+
+    def _unhighlight_marker(self, index):
+        """取消指定索引marker的高亮"""
+        if index < 0 or index >= len(self._map_markers):
+            return
+        marker = self._map_markers[index]
+        marker.marker_color_circle = self._MARKER_COLOR_DEFAULT_CIRCLE
+        marker.marker_color_outside = self._MARKER_COLOR_DEFAULT_OUTSIDE
+        self.map_widget.canvas.delete(marker.polygon)
+        self.map_widget.canvas.delete(marker.big_circle)
+        self.map_widget.canvas.delete(marker.canvas_text)
+        if hasattr(marker, 'canvas_icon') and marker.canvas_icon:
+            self.map_widget.canvas.delete(marker.canvas_icon)
+        if hasattr(marker, 'canvas_image') and marker.canvas_image:
+            self.map_widget.canvas.delete(marker.canvas_image)
+        marker.draw()
+        self._bind_marker_click(marker, index)
+
+    def _clear_all_selections(self):
+        """清除所有选中状态"""
+        for idx in list(self._selected_waypoints):
+            self._unhighlight_marker(idx)
+        self._selected_waypoints.clear()
+        self.tree.selection_set()
+        self.status_label.config(text="就绪")
+        self._clear_selection_graphics()
+
     def _bind_marker_click(self, marker, index):
         """为marker绑定点击选中和右键菜单"""
         items = self._get_marker_canvas_items(marker)
