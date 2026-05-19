@@ -1465,18 +1465,20 @@ class MainWindow(ttkb.Window):
 
     def _edit_selected_waypoint(self):
         """编辑选中的航点（仅单选时可用）"""
-        if len(self._selected_waypoints) != 1:
+        selected = [s for s in self.tree.selection() if s.startswith("wpt_")]
+        if len(selected) != 1:
             messagebox.showinfo("提示", "请先选中一个航点")
             return
-        idx = next(iter(self._selected_waypoints))
+        idx = int(selected[0].split("_")[1])
         self.edit_waypoint(idx)
 
     def _move_selected_waypoint(self):
         """移动选中的航点（仅单选时可用）"""
-        if len(self._selected_waypoints) != 1:
+        selected = [s for s in self.tree.selection() if s.startswith("wpt_")]
+        if len(selected) != 1:
             messagebox.showinfo("提示", "请先选中一个航点")
             return
-        idx = next(iter(self._selected_waypoints))
+        idx = int(selected[0].split("_")[1])
         self._ctx_wpt_move_by_index(idx)
 
     def _delete_waypoint_by_index(self, index):
