@@ -51,6 +51,12 @@ class MainWindow(ttkb.Window):
         self._dragging_track_marker = None
         self._track_drag_data = {}
 
+        # 航迹点轻量圆点
+        self._track_point_dots = []       # [(canvas_id, trk_index, seg_index, pt_index), ...]
+        self._selected_track_points = set()  # 选中的航迹点: (trk_index, seg_index, pt_index)
+        self._dragging_track_dots = False  # 是否正在拖动航迹点
+        self._track_dot_drag_start = None  # 拖动起始canvas坐标
+
         # 地图工具和选中状态
         self._map_tool = "hand"              # 当前工具: "hand" / "rect" / "lasso"
         self._selected_waypoints = set()     # 选中的航点索引集合
@@ -219,6 +225,10 @@ class MainWindow(ttkb.Window):
         # 地图标记引用
         self._map_markers = []
         self._map_paths = []
+
+        # 钩入地图重绘以更新航迹点圆点位置
+        self._orig_draw_move = self.map_widget.draw_move
+        self.map_widget.draw_move = self._patched_draw_move
 
         # 地图鼠标事件
         self.map_widget.canvas.bind("<Motion>", self._on_map_mouse_move)
@@ -528,7 +538,24 @@ class MainWindow(ttkb.Window):
             self._on_map_press(event)
             return
         self._marker_clicked = False
+        self._dragging_track_dots = False
         if self._map_tool == "hand":
+            # 检查是否点击了选中的航迹点圆点（开始拖动）
+            if self._selected_track_points:
+                clicked_dot = self._find_track_dot_at(event.x, event.y)
+                if clicked_dot and clicked_dot in self._selected_track_points:
+                    self._dragging_track_dots = True
+                    self._track_dot_drag_start = (event.x, event.y)
+                    self._track_dot_drag_orig = {}  # {key: (lat, lon)}
+                    tracks = self.gpx_handler.get_tracks()
+                    for key in self._selected_track_points:
+                        ti, si, pi = key
+                        if 0 <= ti < len(tracks):
+                            seg = tracks[ti].segments[si]
+                            if 0 <= pi < len(seg.points):
+                                pt = seg.points[pi]
+                                self._track_dot_drag_orig[key] = (pt.latitude, pt.longitude)
+                    return
             self._selection_start_x = event.x
             self._selection_start_y = event.y
         elif self._map_tool == "rect":
@@ -543,6 +570,31 @@ class MainWindow(ttkb.Window):
         """工具模式下的鼠标拖拽"""
         if self._drag_mode:
             self._on_map_motion(event)
+            return
+        # 拖动航迹点圆点
+        if self._dragging_track_dots:
+            dx = event.x - self._track_dot_drag_start[0]
+            dy = event.y - self._track_dot_drag_start[1]
+            canvas = self.map_widget.canvas
+            r = self._TRACK_DOT_RADIUS
+            for key in self._selected_track_points:
+                for dot_id, ti, si, pi in self._track_point_dots:
+                    if (ti, si, pi) == key:
+                        pos = self._get_track_dot_canvas_pos(ti, si, pi)
+                        if pos:
+                            orig_cx, orig_cy = pos
+                            # 计算原始位置（拖拽前）
+                            orig_key = self._track_dot_drag_orig.get(key)
+                            if orig_key:
+                                try:
+                                    orig_pos = self.map_widget.convert_decimal_coords_to_canvas_coords(*orig_key)
+                                    if orig_pos:
+                                        new_cx = orig_pos[0] + dx
+                                        new_cy = orig_pos[1] + dy
+                                        canvas.coords(dot_id, new_cx - r, new_cy - r, new_cx + r, new_cy + r)
+                                except Exception:
+                                    pass
+                        break
             return
         if self._map_tool == "rect":
             if self._selection_rect_id:
@@ -568,6 +620,11 @@ class MainWindow(ttkb.Window):
         if self._drag_mode:
             self._on_map_release(event)
             return
+        # 完成航迹点拖动
+        if self._dragging_track_dots:
+            self._finish_track_dot_drag(event)
+            self._dragging_track_dots = False
+            return
         if self._map_tool == "hand":
             dx = abs(event.x - self._selection_start_x)
             dy = abs(event.y - self._selection_start_y)
@@ -582,17 +639,32 @@ class MainWindow(ttkb.Window):
 
     def _update_selection_status(self):
         """更新状态栏的选中信息"""
-        count = len(self._selected_waypoints)
-        if count == 0:
+        wpt_count = len(self._selected_waypoints)
+        dot_count = len(self._selected_track_points)
+        total = wpt_count + dot_count
+        if total == 0:
             self.status_label.config(text="就绪")
-        elif count == 1:
-            idx = next(iter(self._selected_waypoints))
-            wpt = self.gpx_handler.get_waypoints()[idx]
-            name = wpt.name or f"航点{idx+1}"
-            self.status_label.config(
-                text=f"已选中：{name} ({wpt.latitude:.6f}, {wpt.longitude:.6f})")
+        elif total == 1:
+            if wpt_count == 1:
+                idx = next(iter(self._selected_waypoints))
+                wpt = self.gpx_handler.get_waypoints()[idx]
+                name = wpt.name or f"航点{idx+1}"
+                self.status_label.config(
+                    text=f"已选中：{name} ({wpt.latitude:.6f}, {wpt.longitude:.6f})")
+            else:
+                key = next(iter(self._selected_track_points))
+                ti, si, pi = key
+                tracks = self.gpx_handler.get_tracks()
+                pt = tracks[ti].segments[si].points[pi]
+                self.status_label.config(
+                    text=f"已选中：航迹点 {pi} ({pt.latitude:.6f}, {pt.longitude:.6f})")
         else:
-            self.status_label.config(text=f"已选中 {count} 个航点")
+            parts = []
+            if wpt_count > 0:
+                parts.append(f"{wpt_count} 个航点")
+            if dot_count > 0:
+                parts.append(f"{dot_count} 个航迹点")
+            self.status_label.config(text=f"已选中 {' + '.join(parts)}")
 
     def _finish_rect_selection(self, event):
         """完成矩形框选"""
@@ -624,6 +696,16 @@ class MainWindow(ttkb.Window):
                     self._selected_waypoints.add(i)
                     self._highlight_marker(i)
                     self.tree.selection_add(f"wpt_{i}")
+            # 遍历航迹点圆点，检查是否在矩形范围内
+            for dot_id, ti, si, pi in self._track_point_dots:
+                pos = self._get_track_dot_canvas_pos(ti, si, pi)
+                if pos is None:
+                    continue
+                cx, cy = pos
+                if min_x <= cx <= max_x and min_y <= cy <= max_y:
+                    key = (ti, si, pi)
+                    self._selected_track_points.add(key)
+                    self._highlight_track_dot(key)
         finally:
             self._syncing_selection = False
 
@@ -653,6 +735,16 @@ class MainWindow(ttkb.Window):
                     self._selected_waypoints.add(i)
                     self._highlight_marker(i)
                     self.tree.selection_add(f"wpt_{i}")
+            # 遍历航迹点圆点，检查是否在多边形内
+            for dot_id, ti, si, pi in self._track_point_dots:
+                pos = self._get_track_dot_canvas_pos(ti, si, pi)
+                if pos is None:
+                    continue
+                cx, cy = pos
+                if self._point_in_polygon(cx, cy, polygon):
+                    key = (ti, si, pi)
+                    self._selected_track_points.add(key)
+                    self._highlight_track_dot(key)
         finally:
             self._syncing_selection = False
 
@@ -829,9 +921,13 @@ class MainWindow(ttkb.Window):
             path.delete()
         for item in self._track_point_markers:
             item[0].delete()
+        # 清除航迹点圆点
+        for dot_id, _, _, _ in self._track_point_dots:
+            self.map_widget.canvas.delete(dot_id)
         self._map_markers.clear()
         self._map_paths.clear()
         self._track_point_markers.clear()
+        self._track_point_dots.clear()
 
         if not self.gpx_handler.gpx:
             return
@@ -845,7 +941,7 @@ class MainWindow(ttkb.Window):
                 # 绑定点击和右键事件
                 self._bind_marker_click(marker, i)
 
-        # 添加航迹路径（不为每个点创建marker，避免大量canvas对象导致卡顿）
+        # 添加航迹路径和航迹点轻量圆点
         for ti, track in enumerate(self.gpx_handler.get_tracks()):
             for si, segment in enumerate(track.segments):
                 valid_points = [(pi, p) for pi, p in enumerate(segment.points)
@@ -853,7 +949,11 @@ class MainWindow(ttkb.Window):
                 if len(valid_points) >= 2:
                     coords = [(p.latitude, p.longitude) for _, p in valid_points]
                     path = self.map_widget.set_path(coords, color="green", width=2)
+                    path._trk_index = ti
                     self._map_paths.append(path)
+                # 为每个航迹点创建轻量圆点
+                for pi, point in valid_points:
+                    self._create_track_dot(point.latitude, point.longitude, ti, si, pi)
 
         self._zoom_to_fit()
 
@@ -885,6 +985,190 @@ class MainWindow(ttkb.Window):
                 else:
                     zoom = 12
                 self.map_widget.set_zoom(zoom)
+
+    # ========== 航迹点圆点交互 ==========
+
+    _TRACK_DOT_COLOR = "#2ECC71"
+    _TRACK_DOT_SELECTED = "#E74C3C"
+    _TRACK_DOT_RADIUS = 3
+
+    def _create_track_dot(self, lat, lon, trk_index, seg_index, pt_index):
+        """创建轻量航迹点圆点"""
+        canvas = self.map_widget.canvas
+        try:
+            canvas_pos = self.map_widget.convert_decimal_coords_to_canvas_coords(lat, lon)
+        except Exception:
+            return
+        if canvas_pos is None:
+            return
+        cx, cy = canvas_pos
+        r = self._TRACK_DOT_RADIUS
+        dot_id = canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                     fill=self._TRACK_DOT_COLOR,
+                                     outline="", tags="track_dot")
+        canvas.tag_bind(dot_id, '<Button-1>',
+                        lambda e, ti=trk_index, si=seg_index, pi=pt_index:
+                            self._on_track_dot_click(ti, si, pi, e))
+        canvas.tag_bind(dot_id, '<Button-3>',
+                        lambda e, ti=trk_index, si=seg_index, pi=pt_index:
+                            self._on_track_dot_right_click(e, ti, si, pi))
+        self._track_point_dots.append((dot_id, trk_index, seg_index, pt_index))
+
+    def _on_track_dot_click(self, trk_index, seg_index, pt_index, event):
+        """点击航迹点圆点"""
+        self._marker_clicked = True
+        key = (trk_index, seg_index, pt_index)
+        ctrl_pressed = event.state & 0x4
+        if not ctrl_pressed:
+            self._clear_all_selections()
+        self._syncing_selection = True
+        try:
+            if key in self._selected_track_points:
+                self._selected_track_points.discard(key)
+                self._set_track_dot_color(key, self._TRACK_DOT_COLOR)
+            else:
+                self._selected_track_points.add(key)
+                self._set_track_dot_color(key, self._TRACK_DOT_SELECTED)
+        finally:
+            self._syncing_selection = False
+        self._update_selection_status()
+
+    def _on_track_dot_right_click(self, event, trk_index, seg_index, pt_index):
+        """右键航迹点圆点"""
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="删除此航迹点",
+                         command=lambda: self._delete_track_point(trk_index, seg_index, pt_index))
+        menu.post(event.x_root, event.y_root)
+
+    def _set_track_dot_color(self, key, color):
+        """设置航迹点圆点颜色"""
+        for dot_id, ti, si, pi in self._track_point_dots:
+            if (ti, si, pi) == key:
+                self.map_widget.canvas.itemconfigure(dot_id, fill=color)
+                break
+
+    def _highlight_track_dot(self, key):
+        """高亮航迹点圆点"""
+        self._set_track_dot_color(key, self._TRACK_DOT_SELECTED)
+
+    def _unhighlight_track_dot(self, key):
+        """取消航迹点圆点高亮"""
+        self._set_track_dot_color(key, self._TRACK_DOT_COLOR)
+
+    def _get_track_dot_canvas_pos(self, trk_index, seg_index, pt_index):
+        """获取航迹点圆点的canvas坐标"""
+        tracks = self.gpx_handler.get_tracks()
+        if 0 <= trk_index < len(tracks):
+            track = tracks[trk_index]
+            if 0 <= seg_index < len(track.segments):
+                seg = track.segments[seg_index]
+                if 0 <= pt_index < len(seg.points):
+                    pt = seg.points[pt_index]
+                    if pt.latitude is not None and pt.longitude is not None:
+                        try:
+                            return self.map_widget.convert_decimal_coords_to_canvas_coords(
+                                pt.latitude, pt.longitude)
+                        except Exception:
+                            pass
+        return None
+
+    def _update_track_dot_positions(self):
+        """更新所有航迹点圆点的canvas位置（地图平移/缩放后调用）"""
+        canvas = self.map_widget.canvas
+        r = self._TRACK_DOT_RADIUS
+        for dot_id, ti, si, pi in self._track_point_dots:
+            pos = self._get_track_dot_canvas_pos(ti, si, pi)
+            if pos:
+                cx, cy = pos
+                canvas.coords(dot_id, cx - r, cy - r, cx + r, cy + r)
+
+    def _patched_draw_move(self, called_after_zoom=False):
+        """地图重绘后更新航迹点圆点位置"""
+        self._orig_draw_move(called_after_zoom)
+        if self._track_point_dots:
+            self._update_track_dot_positions()
+
+    def _find_track_dot_at(self, x, y):
+        """查找canvas坐标(x,y)附近的航迹点，返回key (ti,si,pi) 或 None"""
+        r = 10  # 点击容差半径
+        for dot_id, ti, si, pi in self._track_point_dots:
+            pos = self._get_track_dot_canvas_pos(ti, si, pi)
+            if pos:
+                cx, cy = pos
+                if (x - cx) ** 2 + (y - cy) ** 2 <= r * r:
+                    return (ti, si, pi)
+        return None
+
+    def _finish_track_dot_drag(self, event):
+        """完成航迹点拖动"""
+        if not hasattr(self, '_track_dot_drag_orig') or not self._track_dot_drag_orig:
+            return
+        dx = event.x - self._track_dot_drag_start[0]
+        dy = event.y - self._track_dot_drag_start[1]
+        if abs(dx) < 3 and abs(dy) < 3:
+            return  # 移动太小，忽略
+
+        tracks = self.gpx_handler.get_tracks()
+        modified_tracks = set()
+        for key in self._selected_track_points:
+            ti, si, pi = key
+            orig = self._track_dot_drag_orig.get(key)
+            if orig is None:
+                continue
+            orig_lat, orig_lon = orig
+            # 计算新位置
+            try:
+                orig_pos = self.map_widget.convert_decimal_coords_to_canvas_coords(orig_lat, orig_lon)
+                if orig_pos:
+                    new_cx = orig_pos[0] + dx
+                    new_cy = orig_pos[1] + dy
+                    new_coords = self.map_widget.convert_canvas_coords_to_decimal_coords(new_cx, new_cy)
+                    new_lat, new_lon = new_coords
+                    # 更新GPXTrackPoint
+                    if 0 <= ti < len(tracks):
+                        seg = tracks[ti].segments[si]
+                        if 0 <= pi < len(seg.points):
+                            pt = seg.points[pi]
+                            pt.latitude = new_lat
+                            pt.longitude = new_lon
+                            modified_tracks.add(ti)
+                            # 推送撤销命令
+                            self.undo_manager.push({
+                                'type': 'move_track_point',
+                                'data': {'trk_index': ti, 'seg_index': si,
+                                         'pt_index': pi, 'lat': new_lat, 'lon': new_lon},
+                                'reverse_data': {'trk_index': ti, 'seg_index': si,
+                                                  'pt_index': pi, 'lat': orig_lat, 'lon': orig_lon}
+                            })
+            except Exception:
+                continue
+
+        # 重绘受影响的航迹路径
+        for ti in modified_tracks:
+            self._redraw_track_path(ti)
+        self._update_map()
+        self._mark_modified()
+        self.status_label.config(text=f"已移动 {len(self._selected_track_points)} 个航迹点")
+
+    def _redraw_track_path(self, trk_index):
+        """重绘指定航迹的路径线条"""
+        # 删除该航迹的旧路径
+        old_paths = [p for p in self._map_paths if hasattr(p, '_trk_index') and p._trk_index == trk_index]
+        for p in old_paths:
+            p.delete()
+            self._map_paths.remove(p)
+        # 重新创建路径
+        tracks = self.gpx_handler.get_tracks()
+        if 0 <= trk_index < len(tracks):
+            track = tracks[trk_index]
+            for si, segment in enumerate(track.segments):
+                valid_points = [(pi, p) for pi, p in enumerate(segment.points)
+                                if p.latitude is not None and p.longitude is not None]
+                if len(valid_points) >= 2:
+                    coords = [(p.latitude, p.longitude) for _, p in valid_points]
+                    path = self.map_widget.set_path(coords, color="green", width=2)
+                    path._trk_index = trk_index
+                    self._map_paths.append(path)
 
     # ========== 航点marker交互 ==========
 
@@ -923,6 +1207,10 @@ class MainWindow(ttkb.Window):
             for idx in list(self._selected_waypoints):
                 self._unhighlight_marker(idx)
             self._selected_waypoints.clear()
+            # 清除航迹点选中
+            for key in list(self._selected_track_points):
+                self._unhighlight_track_dot(key)
+            self._selected_track_points.clear()
             self.tree.selection_set()
         finally:
             self._syncing_selection = False
@@ -930,7 +1218,7 @@ class MainWindow(ttkb.Window):
         self._clear_selection_graphics()
 
     def _select_all_waypoints(self):
-        """全选所有航点"""
+        """全选所有航点和航迹点"""
         self._clear_all_selections()
         self._syncing_selection = True
         try:
@@ -939,6 +1227,11 @@ class MainWindow(ttkb.Window):
                 self._selected_waypoints.add(i)
                 self._highlight_marker(i)
                 self.tree.selection_add(f"wpt_{i}")
+            # 全选航迹点
+            for dot_id, ti, si, pi in self._track_point_dots:
+                key = (ti, si, pi)
+                self._selected_track_points.add(key)
+                self._highlight_track_dot(key)
         finally:
             self._syncing_selection = False
         self._update_selection_status()
