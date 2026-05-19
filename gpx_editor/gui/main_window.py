@@ -554,10 +554,19 @@ class MainWindow(ttkb.Window):
         self._marker_clicked = False
         self._dragging_track_dots = False
 
-        # 在任何工具模式下，如果点击了已选中的航迹点，开始拖动
-        if self._selected_track_points:
-            clicked_dot = self._find_track_dot_at(event.x, event.y, selected_only=True)
-            if clicked_dot:
+        # 先检查是否点击了任意航迹点圆点
+        clicked_any_dot = self._find_track_dot_at(event.x, event.y, selected_only=False)
+        if clicked_any_dot:
+            ctrl_pressed = event.state & 0x4
+            # Ctrl+点击已选中的点：取消选中该点，不拖动
+            if ctrl_pressed and clicked_any_dot in self._selected_track_points:
+                self._handle_track_dot_click(clicked_any_dot, ctrl_pressed)
+                return
+            # 如果点击的点不在当前选中范围内，先更新选中状态
+            if clicked_any_dot not in self._selected_track_points:
+                self._handle_track_dot_click(clicked_any_dot, ctrl_pressed)
+            # 现在检查是否可以开始拖动（clicked_any_dot 已在选中集合中）
+            if clicked_any_dot in self._selected_track_points:
                 self._dragging_track_dots = True
                 self._track_dot_drag_start = (event.x, event.y)
                 self._track_dot_drag_orig = {}
@@ -573,9 +582,8 @@ class MainWindow(ttkb.Window):
                             canvas_pos = self._latlon_to_canvas(pt.latitude, pt.longitude)
                             if canvas_pos:
                                 self._track_dot_drag_orig_canvas[key] = canvas_pos
-                # 禁止地图平移
                 self.map_widget.selection_mode = True
-                return
+            return
 
         if self._map_tool == "hand":
             self._selection_start_x = event.x
@@ -1048,9 +1056,6 @@ class MainWindow(ttkb.Window):
         dot_id = canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
                                      fill=self._TRACK_DOT_COLOR,
                                      outline="", tags="track_dot")
-        canvas.tag_bind(dot_id, '<Button-1>',
-                        lambda e, ti=trk_index, si=seg_index, pi=pt_index:
-                            self._on_track_dot_click(ti, si, pi, e))
         canvas.tag_bind(dot_id, '<Button-3>',
                         lambda e, ti=trk_index, si=seg_index, pi=pt_index:
                             self._on_track_dot_right_click(e, ti, si, pi))
@@ -1063,11 +1068,9 @@ class MainWindow(ttkb.Window):
         # 确保航迹点圆点在最上层
         self.map_widget.canvas.tag_raise("track_dot")
 
-    def _on_track_dot_click(self, trk_index, seg_index, pt_index, event):
-        """点击航迹点圆点"""
+    def _handle_track_dot_click(self, key, ctrl_pressed):
+        """处理点击航迹点圆点（由 _on_tool_press 调用）"""
         self._marker_clicked = True
-        key = (trk_index, seg_index, pt_index)
-        ctrl_pressed = event.state & 0x4
         if not ctrl_pressed:
             self._clear_all_selections()
         self._syncing_selection = True
@@ -1821,6 +1824,29 @@ class MainWindow(ttkb.Window):
         y = self.winfo_y() + (self.winfo_height() - dlg.winfo_height()) // 2
         dlg.geometry(f"+{x}+{y}")
 
+    def _sync_selection_from_properties_dialog(self, trk_index, global_indices):
+        """从航迹属性对话框同步选中状态到地图"""
+        tracks = self.gpx_handler.get_tracks()
+        if trk_index >= len(tracks):
+            return
+        track = tracks[trk_index]
+        # 清除当前该航迹的选中状态
+        keys_to_remove = {k for k in self._selected_track_points if k[0] == trk_index}
+        for key in keys_to_remove:
+            self._unhighlight_track_dot(key)
+            self._selected_track_points.discard(key)
+        # 将全局索引转换为 (trk_index, seg_index, pt_index) 并选中
+        for global_idx in global_indices:
+            idx = global_idx
+            for si, seg in enumerate(track.segments):
+                if idx < len(seg.points):
+                    key = (trk_index, si, idx)
+                    self._selected_track_points.add(key)
+                    self._highlight_track_dot(key)
+                    break
+                idx -= len(seg.points)
+        self._update_selection_status()
+
     def _open_track_properties_for_point(self, trk_index, seg_index, pt_index):
         """打开航迹属性对话框并定位到指定航迹点"""
         from .properties_dialog import TrackPropertiesDialog
@@ -1837,7 +1863,11 @@ class MainWindow(ttkb.Window):
                         idx += len(track.segments[s].points)
                     idx += pi
                     selected_indices.add(idx)
-            dialog = TrackPropertiesDialog(self, track, selected_indices=selected_indices)
+            dialog = TrackPropertiesDialog(
+                self, track, selected_indices=selected_indices,
+                track_index=trk_index,
+                on_selection_change=self._sync_selection_from_properties_dialog
+            )
             if dialog.result:
                 self._populate_tree()
                 self._mark_modified()
@@ -2238,7 +2268,11 @@ class MainWindow(ttkb.Window):
             return
         from .properties_dialog import TrackPropertiesDialog
         track = self.gpx_handler.get_tracks()[self._ctx_trk_index]
-        dialog = TrackPropertiesDialog(self, track)
+        dialog = TrackPropertiesDialog(
+            self, track,
+            track_index=self._ctx_trk_index,
+            on_selection_change=self._sync_selection_from_properties_dialog
+        )
         if dialog.result:
             self._populate_tree()
             self._mark_modified()

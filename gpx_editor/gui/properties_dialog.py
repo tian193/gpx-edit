@@ -173,15 +173,16 @@ class WaypointPropertiesDialog:
 class TrackPropertiesDialog:
     """航迹属性对话框 - MapSource风格"""
 
-    def __init__(self, parent, track, selected_indices=None):
+    def __init__(self, parent, track, selected_indices=None, track_index=0, on_selection_change=None):
         self.result = False
         self.track = track
         self._selected_indices = selected_indices or set()
+        self._track_index = track_index
+        self._on_selection_change = on_selection_change
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(f"航迹属性 — {track.name or '未命名'}")
         self.dialog.transient(parent)
-        self.dialog.grab_set()
         self.dialog.resizable(True, True)
         self.dialog.geometry("800x600")
 
@@ -295,6 +296,14 @@ class TrackPropertiesDialog:
         self._point_menu.add_command(label="删除选中航迹点", command=self._delete_selected_points)
         self._point_menu.add_command(label="移动选中航迹点...", command=self._move_selected_points)
         self.point_tree.bind("<Button-3>", self._on_point_right_click)
+        self.point_tree.bind("<<TreeviewSelect>>", self._on_treeview_select)
+
+    def _on_treeview_select(self, event):
+        """树形列表选择变化时通知主窗口"""
+        if not self._on_selection_change:
+            return
+        indices = self._get_selected_point_indices()
+        self._on_selection_change(self._track_index, indices)
 
     def _highlight_selected_points(self):
         """高亮从地图传入的选中航迹点"""

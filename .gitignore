@@ -9,3 +9,10 @@ venv/
 *.egg-info/
 dist/
 build/
+
+# AI 工具相关
+.claude/
+.agents/
+.superpowers/
+docs/superpowers/
+CLAUDE.md
