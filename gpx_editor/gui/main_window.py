@@ -546,30 +546,31 @@ class MainWindow(ttkb.Window):
             return
         self._marker_clicked = False
         self._dragging_track_dots = False
+
+        # 在任何工具模式下，如果点击了已选中的航迹点，开始拖动
+        if self._selected_track_points:
+            clicked_dot = self._find_track_dot_at(event.x, event.y)
+            if clicked_dot and clicked_dot in self._selected_track_points:
+                self._dragging_track_dots = True
+                self._track_dot_drag_start = (event.x, event.y)
+                self._track_dot_drag_orig = {}
+                self._track_dot_drag_orig_canvas = {}
+                tracks = self.gpx_handler.get_tracks()
+                for key in self._selected_track_points:
+                    ti, si, pi = key
+                    if 0 <= ti < len(tracks):
+                        seg = tracks[ti].segments[si]
+                        if 0 <= pi < len(seg.points):
+                            pt = seg.points[pi]
+                            self._track_dot_drag_orig[key] = (pt.latitude, pt.longitude)
+                            canvas_pos = self._latlon_to_canvas(pt.latitude, pt.longitude)
+                            if canvas_pos:
+                                self._track_dot_drag_orig_canvas[key] = canvas_pos
+                # 禁止地图平移
+                self.map_widget.selection_mode = True
+                return
+
         if self._map_tool == "hand":
-            # 检查是否点击了选中的航迹点圆点（开始拖动）
-            if self._selected_track_points:
-                clicked_dot = self._find_track_dot_at(event.x, event.y)
-                if clicked_dot and clicked_dot in self._selected_track_points:
-                    self._dragging_track_dots = True
-                    self._track_dot_drag_start = (event.x, event.y)
-                    self._track_dot_drag_orig = {}  # {key: (lat, lon)}
-                    self._track_dot_drag_orig_canvas = {}  # {key: (cx, cy)}
-                    tracks = self.gpx_handler.get_tracks()
-                    for key in self._selected_track_points:
-                        ti, si, pi = key
-                        if 0 <= ti < len(tracks):
-                            seg = tracks[ti].segments[si]
-                            if 0 <= pi < len(seg.points):
-                                pt = seg.points[pi]
-                                self._track_dot_drag_orig[key] = (pt.latitude, pt.longitude)
-                                # 保存原始canvas坐标
-                                canvas_pos = self._latlon_to_canvas(pt.latitude, pt.longitude)
-                                if canvas_pos:
-                                    self._track_dot_drag_orig_canvas[key] = canvas_pos
-                    # 禁止地图平移
-                    self.map_widget.selection_mode = True
-                    return
             self._selection_start_x = event.x
             self._selection_start_y = event.y
         elif self._map_tool == "rect":
@@ -631,9 +632,8 @@ class MainWindow(ttkb.Window):
         if self._dragging_track_dots:
             self._finish_track_dot_drag(event)
             self._dragging_track_dots = False
-            # 恢复地图平移
-            if self._map_tool == "hand":
-                self.map_widget.selection_mode = False
+            # 恢复地图平移（根据当前工具决定selection_mode）
+            self.map_widget.selection_mode = (self._map_tool in ("rect", "lasso"))
             return
         if self._map_tool == "hand":
             dx = abs(event.x - self._selection_start_x)
