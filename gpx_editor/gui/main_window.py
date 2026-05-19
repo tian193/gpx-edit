@@ -719,6 +719,8 @@ class MainWindow(ttkb.Window):
         finally:
             self._syncing_selection = False
 
+        # 更新航迹点canvas坐标，确保后续拖动检测准确
+        self._update_track_dot_positions()
         self._update_selection_status()
 
     def _finish_lasso_selection(self, event):
@@ -758,6 +760,8 @@ class MainWindow(ttkb.Window):
         finally:
             self._syncing_selection = False
 
+        # 更新航迹点canvas坐标，确保后续拖动检测准确
+        self._update_track_dot_positions()
         self._update_selection_status()
 
     @staticmethod
@@ -1218,14 +1222,22 @@ class MainWindow(ttkb.Window):
     def _find_track_dot_at(self, x, y):
         """查找canvas坐标(x,y)附近的航迹点，返回key (ti,si,pi) 或 None"""
         r = 10  # 点击容差半径
+        r_sq = r * r
+        # 优先使用canvas oval的实际坐标
         canvas = self.map_widget.canvas
         for dot_id, ti, si, pi in self._track_point_dots:
-            # 直接获取canvas oval的当前坐标
             coords = canvas.coords(dot_id)
             if coords and len(coords) == 4:
                 cx = (coords[0] + coords[2]) / 2
                 cy = (coords[1] + coords[3]) / 2
-                if (x - cx) ** 2 + (y - cy) ** 2 <= r * r:
+                if (x - cx) ** 2 + (y - cy) ** 2 <= r_sq:
+                    return (ti, si, pi)
+        # 如果没找到，尝试用当前视口重新计算位置（canvas坐标可能未更新）
+        for dot_id, ti, si, pi in self._track_point_dots:
+            pos = self._get_track_dot_canvas_pos(ti, si, pi)
+            if pos:
+                cx, cy = pos
+                if (x - cx) ** 2 + (y - cy) ** 2 <= r_sq:
                     return (ti, si, pi)
         return None
 
