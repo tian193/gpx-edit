@@ -219,10 +219,10 @@ class MainWindow(ttkb.Window):
         # 地图鼠标事件
         self.map_widget.canvas.bind("<Motion>", self._on_map_mouse_move)
         self.map_widget.canvas.bind("<Double-1>", self._on_map_double_click)
-        # 航点拖拽模式的全局鼠标事件
-        self.map_widget.canvas.bind("<ButtonPress-1>", self._on_map_press, add=True)
-        self.map_widget.canvas.bind("<B1-Motion>", self._on_map_motion, add=True)
-        self.map_widget.canvas.bind("<ButtonRelease-1>", self._on_map_release, add=True)
+        # 统一的鼠标事件处理（工具栏模式）
+        self.map_widget.canvas.bind("<ButtonPress-1>", self._on_tool_press, add=True)
+        self.map_widget.canvas.bind("<B1-Motion>", self._on_tool_drag, add=True)
+        self.map_widget.canvas.bind("<ButtonRelease-1>", self._on_tool_release, add=True)
 
         # 地图右键菜单 - 在此添加航点
         self.map_widget.add_right_click_menu_command(
@@ -493,6 +493,94 @@ class MainWindow(ttkb.Window):
             self.map_widget.canvas.delete(self._selection_lasso_id)
             self._selection_lasso_id = None
         self._selection_points.clear()
+
+    def _on_tool_press(self, event):
+        """工具模式下的鼠标按下"""
+        if self._drag_mode:
+            self._on_map_press(event)
+            return
+        self._marker_clicked = False
+        if self._map_tool == "hand":
+            self._selection_start_x = event.x
+            self._selection_start_y = event.y
+        elif self._map_tool == "rect":
+            self._selection_start_x = event.x
+            self._selection_start_y = event.y
+            self._clear_selection_graphics()
+        elif self._map_tool == "lasso":
+            self._selection_points = [(event.x, event.y)]
+            self._clear_selection_graphics()
+
+    def _on_tool_drag(self, event):
+        """工具模式下的鼠标拖拽"""
+        if self._drag_mode:
+            self._on_map_motion(event)
+            return
+        if self._map_tool == "rect":
+            if self._selection_rect_id:
+                self.map_widget.canvas.delete(self._selection_rect_id)
+            self._selection_rect_id = self.map_widget.canvas.create_rectangle(
+                self._selection_start_x, self._selection_start_y,
+                event.x, event.y,
+                outline="#3399ff", width=2,
+                fill="#3399ff", stipple="gray25"
+            )
+        elif self._map_tool == "lasso":
+            self._selection_points.append((event.x, event.y))
+            if self._selection_lasso_id:
+                self.map_widget.canvas.delete(self._selection_lasso_id)
+            if len(self._selection_points) >= 2:
+                flat_points = [coord for point in self._selection_points for coord in point]
+                self._selection_lasso_id = self.map_widget.canvas.create_line(
+                    *flat_points, fill="#3399ff", width=2, dash=(4, 4)
+                )
+
+    def _on_tool_release(self, event):
+        """工具模式下的鼠标释放"""
+        if self._drag_mode:
+            self._on_map_release(event)
+            return
+        if self._map_tool == "hand":
+            dx = abs(event.x - self._selection_start_x)
+            dy = abs(event.y - self._selection_start_y)
+            if dx < 5 and dy < 5:
+                if not self._marker_clicked:
+                    self._clear_all_selections()
+            self._marker_clicked = False
+        elif self._map_tool == "rect":
+            self._finish_rect_selection(event)
+        elif self._map_tool == "lasso":
+            self._finish_lasso_selection(event)
+
+    def _update_selection_status(self):
+        """更新状态栏的选中信息"""
+        count = len(self._selected_waypoints)
+        if count == 0:
+            self.status_label.config(text="就绪")
+        elif count == 1:
+            idx = next(iter(self._selected_waypoints))
+            wpt = self.gpx_handler.get_waypoints()[idx]
+            name = wpt.name or f"航点{idx+1}"
+            self.status_label.config(
+                text=f"已选中：{name} ({wpt.latitude:.6f}, {wpt.longitude:.6f})")
+        else:
+            self.status_label.config(text=f"已选中 {count} 个航点")
+
+    def _finish_rect_selection(self, event):
+        """完成矩形框选（待实现）"""
+        self._clear_selection_graphics()
+
+    def _finish_lasso_selection(self, event):
+        """完成任意框选（待实现）"""
+        self._clear_selection_graphics()
+
+    def _get_marker_canvas_pos(self, marker):
+        """获取marker在canvas上的坐标"""
+        try:
+            canvas_pos = marker.get_canvas_pos(marker.position)
+            return canvas_pos
+        except Exception:
+            return None
 
     def _toggle_satellite(self):
         """切换卫星图层"""
@@ -782,9 +870,18 @@ class MainWindow(ttkb.Window):
         return items
 
     def _on_marker_click(self, index):
-        """点击marker - 在树形列表中选中对应航点"""
-        self.tree.selection_set(f"wpt_{index}")
-        self.tree.see(f"wpt_{index}")
+        """点击marker - 选中/取消选中航点"""
+        self._marker_clicked = True
+        if index in self._selected_waypoints:
+            self._selected_waypoints.discard(index)
+            self._unhighlight_marker(index)
+            self.tree.selection_remove(f"wpt_{index}")
+        else:
+            self._selected_waypoints.add(index)
+            self._highlight_marker(index)
+            self.tree.selection_set(f"wpt_{index}")
+            self.tree.see(f"wpt_{index}")
+        self._update_selection_status()
 
     def _on_marker_right_click(self, event, marker, index):
         """航点marker右键菜单"""
