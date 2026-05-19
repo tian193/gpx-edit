@@ -598,8 +598,43 @@ class MainWindow(ttkb.Window):
         self._update_selection_status()
 
     def _finish_lasso_selection(self, event):
-        """完成任意框选（待实现）"""
+        """完成任意框选"""
+        self._selection_points.append((event.x, event.y))
         self._clear_selection_graphics()
+
+        if len(self._selection_points) < 3:
+            return
+
+        ctrl_pressed = event.state & 0x4
+        if not ctrl_pressed:
+            self._clear_all_selections()
+
+        polygon = self._selection_points
+        for i, marker in enumerate(self._map_markers):
+            canvas_pos = self._get_marker_canvas_pos(marker)
+            if canvas_pos is None:
+                continue
+            cx, cy = canvas_pos
+            if self._point_in_polygon(cx, cy, polygon):
+                self._selected_waypoints.add(i)
+                self._highlight_marker(i)
+                self.tree.selection_add(f"wpt_{i}")
+
+        self._update_selection_status()
+
+    @staticmethod
+    def _point_in_polygon(x, y, polygon):
+        """射线法判断点是否在多边形内"""
+        n = len(polygon)
+        inside = False
+        j = n - 1
+        for i in range(n):
+            xi, yi = polygon[i]
+            xj, yj = polygon[j]
+            if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+                inside = not inside
+            j = i
+        return inside
 
     def _get_marker_canvas_pos(self, marker):
         """获取marker在canvas上的坐标"""
