@@ -56,6 +56,7 @@ class MainWindow(ttkb.Window):
         self._selected_track_points = set()  # 选中的航迹点: (trk_index, seg_index, pt_index)
         self._dragging_track_dots = False  # 是否正在拖动航迹点
         self._track_dot_drag_start = None  # 拖动起始canvas坐标
+        self._need_raise_dots = False      # 是否需要提升航迹点层级
 
         # 地图工具和选中状态
         self._map_tool = "hand"              # 当前工具: "hand" / "rect" / "lasso"
@@ -1144,8 +1145,8 @@ class MainWindow(ttkb.Window):
             if pos:
                 cx, cy = pos
                 canvas.coords(dot_id, cx - r, cy - r, cx + r, cy + r)
-        # 确保航迹点圆点在最上层（不被瓦片图片覆盖）
-        canvas.tag_raise("track_dot")
+        # 标记需要提升层级（在瓦片加载完成后执行）
+        self._need_raise_dots = True
 
     def _patched_draw_move(self, called_after_zoom=False):
         """地图重绘后更新航迹点圆点位置"""
@@ -1164,8 +1165,10 @@ class MainWindow(ttkb.Window):
     def _patched_update_canvas_tile_images(self):
         """瓦片图片加载后确保航迹点圆点在最上层"""
         self._orig_update_canvas_tile_images()
-        if self._track_point_dots:
+        # 只在有新瓦片加载时才提升层级（减少不必要的调用）
+        if self._track_point_dots and hasattr(self, '_need_raise_dots') and self._need_raise_dots:
             self.map_widget.canvas.tag_raise("track_dot")
+            self._need_raise_dots = False
 
     def _update_scale_label(self):
         """更新比例尺（线段+距离）"""
