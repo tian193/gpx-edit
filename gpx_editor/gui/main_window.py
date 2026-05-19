@@ -494,8 +494,10 @@ class MainWindow(ttkb.Window):
         self._update_tool_buttons()
         if tool == "hand":
             self.map_widget.canvas.config(cursor="arrow")
+            self.map_widget.selection_mode = False
         else:
             self.map_widget.canvas.config(cursor="crosshair")
+            self.map_widget.selection_mode = True
 
     def _update_tool_buttons(self):
         """更新工具栏按钮高亮状态"""
