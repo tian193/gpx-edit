@@ -632,9 +632,10 @@ class MainWindow(ttkb.Window):
     def _finish_lasso_selection(self, event):
         """完成任意框选"""
         self._selection_points.append((event.x, event.y))
+        polygon = list(self._selection_points)
         self._clear_selection_graphics()
 
-        if len(self._selection_points) < 3:
+        if len(polygon) < 3:
             return
 
         ctrl_pressed = event.state & 0x4
@@ -643,7 +644,6 @@ class MainWindow(ttkb.Window):
 
         self._syncing_selection = True
         try:
-            polygon = self._selection_points
             for i, marker in enumerate(self._map_markers):
                 canvas_pos = self._get_marker_canvas_pos(marker)
                 if canvas_pos is None:
@@ -845,7 +845,7 @@ class MainWindow(ttkb.Window):
                 # 绑定点击和右键事件
                 self._bind_marker_click(marker, i)
 
-        # 添加航迹路径和航迹点标记
+        # 添加航迹路径（不为每个点创建marker，避免大量canvas对象导致卡顿）
         for ti, track in enumerate(self.gpx_handler.get_tracks()):
             for si, segment in enumerate(track.segments):
                 valid_points = [(pi, p) for pi, p in enumerate(segment.points)
@@ -854,15 +854,6 @@ class MainWindow(ttkb.Window):
                     coords = [(p.latitude, p.longitude) for _, p in valid_points]
                     path = self.map_widget.set_path(coords, color="green", width=2)
                     self._map_paths.append(path)
-                # 为每个航迹点创建小绿色标记
-                for pi, point in valid_points:
-                    marker = self.map_widget.set_marker(
-                        point.latitude, point.longitude, text="",
-                        marker_color_circle="green",
-                        marker_color_outside="white"
-                    )
-                    self._track_point_markers.append((marker, ti, si, pi))
-                    self._bind_track_point_drag(marker, ti, si, pi)
 
         self._zoom_to_fit()
 
