@@ -1061,9 +1061,28 @@ class MainWindow(ttkb.Window):
 
     def _on_track_dot_right_click(self, event, trk_index, seg_index, pt_index):
         """右键航迹点圆点"""
+        key = (trk_index, seg_index, pt_index)
+        # 如果右键的点不在选中范围内，则单独选中它
+        if key not in self._selected_track_points:
+            self._clear_all_selections()
+            self._selected_track_points.add(key)
+            self._highlight_track_dot(key)
+
         menu = tk.Menu(self, tearoff=0)
-        menu.add_command(label="删除此航迹点",
-                         command=lambda: self._delete_track_point(trk_index, seg_index, pt_index))
+        count = len(self._selected_track_points)
+        if count > 1:
+            menu.add_command(label=f"删除选中的 {count} 个航迹点",
+                             command=self._delete_selected_track_points)
+            menu.add_command(label=f"移动选中的 {count} 个航迹点...",
+                             command=self._move_selected_track_points)
+        else:
+            menu.add_command(label="删除此航迹点",
+                             command=lambda: self._delete_track_point(trk_index, seg_index, pt_index))
+            menu.add_command(label="移动此航迹点...",
+                             command=lambda: self._move_single_track_point(trk_index, seg_index, pt_index))
+        menu.add_separator()
+        menu.add_command(label="在航迹属性中定位",
+                         command=lambda: self._open_track_properties_for_point(trk_index, seg_index, pt_index))
         menu.post(event.x_root, event.y_root)
 
     def _set_track_dot_color(self, key, color):
@@ -1562,6 +1581,131 @@ class MainWindow(ttkb.Window):
                     self._mark_modified()
                     self.status_label.config(
                         text=f"已删除航迹点 ({old_lat:.6f}, {old_lon:.6f})")
+
+    def _delete_selected_track_points(self):
+        """删除所有选中的航迹点"""
+        if not self._selected_track_points:
+            return
+        count = len(self._selected_track_points)
+        if not messagebox.askyesno("确认", f"确定要删除 {count} 个航迹点吗？"):
+            return
+        tracks = self.gpx_handler.get_tracks()
+        # 从后往前删除，避免索引偏移
+        points_to_delete = sorted(self._selected_track_points, reverse=True)
+        for trk_index, seg_index, pt_index in points_to_delete:
+            if 0 <= trk_index < len(tracks):
+                track = tracks[trk_index]
+                if 0 <= seg_index < len(track.segments):
+                    segment = track.segments[seg_index]
+                    if 0 <= pt_index < len(segment.points):
+                        segment.points.pop(pt_index)
+        self._selected_track_points.clear()
+        self._update_map()
+        self._mark_modified()
+        self.status_label.config(text=f"已删除 {count} 个航迹点")
+
+    def _move_single_track_point(self, trk_index, seg_index, pt_index):
+        """移动单个航迹点（弹出偏移量输入对话框）"""
+        tracks = self.gpx_handler.get_tracks()
+        if 0 <= trk_index < len(tracks):
+            track = tracks[trk_index]
+            if 0 <= seg_index < len(track.segments):
+                segment = track.segments[seg_index]
+                if 0 <= pt_index < len(segment.points):
+                    pt = segment.points[pt_index]
+                    self._show_move_track_point_dialog([pt])
+
+    def _move_selected_track_points(self):
+        """移动所有选中的航迹点"""
+        if not self._selected_track_points:
+            return
+        tracks = self.gpx_handler.get_tracks()
+        points_to_move = []
+        for trk_index, seg_index, pt_index in self._selected_track_points:
+            if 0 <= trk_index < len(tracks):
+                track = tracks[trk_index]
+                if 0 <= seg_index < len(track.segments):
+                    segment = track.segments[seg_index]
+                    if 0 <= pt_index < len(segment.points):
+                        points_to_move.append(segment.points[pt_index])
+        if points_to_move:
+            self._show_move_track_point_dialog(points_to_move)
+
+    def _show_move_track_point_dialog(self, points):
+        """显示移动航迹点偏移量输入对话框"""
+        count = len(points)
+        dlg = tk.Toplevel(self)
+        dlg.title(f"移动 {count} 个航迹点")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        frame = ttk.Frame(dlg, padding=15)
+        frame.pack(fill=BOTH, expand=True)
+
+        if count == 1:
+            pt = points[0]
+            ttk.Label(frame, text=f"当前: {pt.latitude:.6f}, {pt.longitude:.6f}",
+                      foreground="gray").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 10))
+        else:
+            ttk.Label(frame, text=f"将对 {count} 个航迹点应用相同的偏移量",
+                      foreground="gray").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 10))
+
+        ttk.Label(frame, text="X偏移(米, 正=东):").grid(row=1, column=0, sticky=W, pady=3)
+        x_var = tk.StringVar(value="0")
+        ttk.Entry(frame, textvariable=x_var, width=15).grid(row=1, column=1, padx=(5, 0))
+
+        ttk.Label(frame, text="Y偏移(米, 正=北):").grid(row=2, column=0, sticky=W, pady=3)
+        y_var = tk.StringVar(value="0")
+        ttk.Entry(frame, textvariable=y_var, width=15).grid(row=2, column=1, padx=(5, 0))
+
+        def on_ok():
+            try:
+                x_m = float(x_var.get())
+                y_m = float(y_var.get())
+            except ValueError:
+                messagebox.showwarning("提示", "偏移量格式不正确", parent=dlg)
+                return
+            from ..core.gpx_editor import GpxEditor
+            for pt in points:
+                new_lat, new_lon = GpxEditor.offset_coordinates(pt.latitude, pt.longitude, x_m, y_m)
+                pt.latitude = new_lat
+                pt.longitude = new_lon
+            dlg.destroy()
+            self._update_map()
+            self._mark_modified()
+            self.status_label.config(text=f"已移动 {count} 个航迹点")
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=(10, 0))
+        ttk.Button(btn_frame, text="确定", command=on_ok, width=8).pack(side=LEFT, padx=5)
+        ttk.Button(btn_frame, text="取消", command=dlg.destroy, width=8).pack(side=LEFT, padx=5)
+
+        dlg.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - dlg.winfo_width()) // 2
+        y = self.winfo_y() + (self.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{x}+{y}")
+
+    def _open_track_properties_for_point(self, trk_index, seg_index, pt_index):
+        """打开航迹属性对话框并定位到指定航迹点"""
+        from .properties_dialog import TrackPropertiesDialog
+        tracks = self.gpx_handler.get_tracks()
+        if 0 <= trk_index < len(tracks):
+            track = tracks[trk_index]
+            # 传递选中的航迹点用于高亮
+            selected_indices = set()
+            for ti, si, pi in self._selected_track_points:
+                if ti == trk_index:
+                    # 计算全局索引
+                    idx = 0
+                    for s in range(si):
+                        idx += len(track.segments[s].points)
+                    idx += pi
+                    selected_indices.add(idx)
+            dialog = TrackPropertiesDialog(self, track, selected_indices=selected_indices)
+            if dialog.result:
+                self._populate_tree()
+                self._mark_modified()
 
     # ========== 地图双击插入航迹点 ==========
 
@@ -2131,6 +2275,10 @@ class MainWindow(ttkb.Window):
 
     def _delete_selected(self):
         """删除选中项"""
+        # 优先删除地图上选中的航迹点
+        if self._selected_track_points:
+            self._delete_selected_track_points()
+            return
         selected = self.tree.selection()
         if not selected:
             return

@@ -173,9 +173,10 @@ class WaypointPropertiesDialog:
 class TrackPropertiesDialog:
     """航迹属性对话框 - MapSource风格"""
 
-    def __init__(self, parent, track):
+    def __init__(self, parent, track, selected_indices=None):
         self.result = False
         self.track = track
+        self._selected_indices = selected_indices or set()
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(f"航迹属性 — {track.name or '未命名'}")
@@ -185,6 +186,7 @@ class TrackPropertiesDialog:
         self.dialog.geometry("800x600")
 
         self._create_widgets()
+        self._highlight_selected_points()
 
         # 居中
         self.dialog.update_idletasks()
@@ -293,6 +295,21 @@ class TrackPropertiesDialog:
         self._point_menu.add_command(label="删除选中航迹点", command=self._delete_selected_points)
         self._point_menu.add_command(label="移动选中航迹点...", command=self._move_selected_points)
         self.point_tree.bind("<Button-3>", self._on_point_right_click)
+
+    def _highlight_selected_points(self):
+        """高亮从地图传入的选中航迹点"""
+        if not self._selected_indices:
+            return
+        items = self.point_tree.get_children()
+        selected_items = []
+        for item in items:
+            values = self.point_tree.item(item, "values")
+            idx = int(values[0])
+            if idx in self._selected_indices:
+                selected_items.append(item)
+        if selected_items:
+            self.point_tree.selection_set(selected_items)
+            self.point_tree.see(selected_items[0])  # 滚动到第一个选中项
 
     def _on_point_right_click(self, event):
         """右键航迹点列表"""
