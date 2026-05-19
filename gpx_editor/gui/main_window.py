@@ -1473,14 +1473,123 @@ class MainWindow(ttkb.Window):
         self.edit_waypoint(idx)
 
     def _move_selected_waypoint(self):
-        """移动选中的航点（仅单选时可用）"""
+        """移动选中的航点（支持多选批量移动）"""
         selected = [s for s in self.tree.selection() if s.startswith("wpt_")]
-        if len(selected) != 1:
-            messagebox.showinfo("提示", "请先选中一个航点")
+        if not selected:
+            messagebox.showinfo("提示", "请先选中航点")
             return
-        idx = int(selected[0].split("_")[1])
-        self._ctx_wpt_move_by_index(idx)
+        if len(selected) == 1:
+            idx = int(selected[0].split("_")[1])
+            self._ctx_wpt_move_by_index(idx)
+        else:
+            indices = [int(s.split("_")[1]) for s in selected]
+            self._batch_move_waypoints(indices)
 
+    def _batch_move_waypoints(self, indices):
+        """批量移动航点（偏移方式）"""
+        from ..core.gpx_editor import GpxEditor
+        dialog = tk.Toplevel(self)
+        dialog.title(f"批量移动 {len(indices)} 个航点")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill=BOTH, expand=True)
+
+        ttk.Label(main_frame, text=f"将 {len(indices)} 个航点整体偏移：",
+                  foreground="#555555").pack(anchor=W, pady=(0, 8))
+
+        offset_frame = ttk.LabelFrame(main_frame, text="偏移量 (米)", padding=8)
+        offset_frame.pack(fill=X, pady=(0, 8))
+
+        ttk.Label(offset_frame, text="东西方向 (正=东, 负=西):").grid(row=0, column=0, sticky=W, pady=3)
+        x_offset_var = tk.StringVar(value="0")
+        ttk.Entry(offset_frame, textvariable=x_offset_var, width=15).grid(row=0, column=1, padx=(5, 0))
+
+        ttk.Label(offset_frame, text="南北方向 (正=北, 负=南):").grid(row=1, column=0, sticky=W, pady=3)
+        y_offset_var = tk.StringVar(value="0")
+        ttk.Entry(offset_frame, textvariable=y_offset_var, width=15).grid(row=1, column=1, padx=(5, 0))
+
+        quick_frame = ttk.LabelFrame(main_frame, text="快捷偏移", padding=8)
+        quick_frame.pack(fill=X, pady=(0, 8))
+
+        def quick_offset(dx, dy):
+            try:
+                cur_x = float(x_offset_var.get())
+            except ValueError:
+                cur_x = 0.0
+            try:
+                cur_y = float(y_offset_var.get())
+            except ValueError:
+                cur_y = 0.0
+            x_offset_var.set(f"{cur_x + dx:.1f}")
+            y_offset_var.set(f"{cur_y + dy:.1f}")
+
+        ns_frame = ttk.Frame(quick_frame)
+        ns_frame.pack(pady=3)
+        ttk.Button(ns_frame, text="北 +10m", width=10, command=lambda: quick_offset(0, 10)).pack(side=LEFT, padx=2)
+        ttk.Button(ns_frame, text="北 +1m", width=10, command=lambda: quick_offset(0, 1)).pack(side=LEFT, padx=2)
+        ttk.Button(ns_frame, text="南 -1m", width=10, command=lambda: quick_offset(0, -1)).pack(side=LEFT, padx=2)
+        ttk.Button(ns_frame, text="南 -10m", width=10, command=lambda: quick_offset(0, -10)).pack(side=LEFT, padx=2)
+
+        ew_frame = ttk.Frame(quick_frame)
+        ew_frame.pack(pady=3)
+        ttk.Button(ew_frame, text="西 -10m", width=10, command=lambda: quick_offset(-10, 0)).pack(side=LEFT, padx=2)
+        ttk.Button(ew_frame, text="西 -1m", width=10, command=lambda: quick_offset(-1, 0)).pack(side=LEFT, padx=2)
+        ttk.Button(ew_frame, text="东 +1m", width=10, command=lambda: quick_offset(1, 0)).pack(side=LEFT, padx=2)
+        ttk.Button(ew_frame, text="东 +10m", width=10, command=lambda: quick_offset(10, 0)).pack(side=LEFT, padx=2)
+
+        result = [False]
+
+        def on_ok():
+            try:
+                x_m = float(x_offset_var.get())
+            except ValueError:
+                messagebox.showwarning("提示", "东西方向偏移量格式不正确", parent=dialog)
+                return
+            try:
+                y_m = float(y_offset_var.get())
+            except ValueError:
+                messagebox.showwarning("提示", "南北方向偏移量格式不正确", parent=dialog)
+                return
+            if x_m == 0 and y_m == 0:
+                messagebox.showinfo("提示", "偏移量为零，航点不会移动", parent=dialog)
+                return
+            result[0] = True
+            waypoints = self.gpx_handler.get_waypoints()
+            for idx in indices:
+                if 0 <= idx < len(waypoints):
+                    wpt = waypoints[idx]
+                    if wpt.latitude is not None and wpt.longitude is not None:
+                        new_lat, new_lon = GpxEditor.offset_coordinates(
+                            wpt.latitude, wpt.longitude, x_m, y_m)
+                        old_lat, old_lon = wpt.latitude, wpt.longitude
+                        wpt.latitude = new_lat
+                        wpt.longitude = new_lon
+                        self.undo_manager.push({
+                            'type': 'edit_waypoint',
+                            'data': {'index': idx, 'lat': new_lat, 'lon': new_lon,
+                                     'name': wpt.name, 'ele': wpt.elevation, 'desc': wpt.description},
+                            'reverse_data': {'index': idx, 'lat': old_lat, 'lon': old_lon,
+                                             'name': wpt.name, 'ele': wpt.elevation, 'desc': wpt.description}
+                        })
+            self._populate_tree()
+            self._mark_modified()
+            self.status_label.config(text=f"已批量移动 {len(indices)} 个航点")
+            dialog.destroy()
+
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=X, pady=(10, 0))
+        ttk.Button(btn_frame, text="确定", command=on_ok, bootstyle=PRIMARY, width=10).pack(side=RIGHT, padx=5)
+        ttk.Button(btn_frame, text="取消", command=dialog.destroy, width=10).pack(side=RIGHT, padx=5)
+
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_y() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        dialog.wait_window()
     def _delete_waypoint_by_index(self, index):
         """按索引删除航点"""
         waypoints = self.gpx_handler.get_waypoints()
